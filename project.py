@@ -4,6 +4,8 @@ import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
 
+# Returns index of highest and lowest
+# element in a array
 def getMinMaxIndex(arr):
 	max = arr[0]
 	min = arr[0]
@@ -18,8 +20,8 @@ def getMinMaxIndex(arr):
 			mini = i
 	return (maxi, mini)
 
-bins = np.arange(256).reshape(256,1)
-
+# Gets values of green in a image, calculates difference and
+# returns pixels with highest and lowest values
 def calculateHistogram(image):
 	(width, height, _) = image.shape
 	vlines = np.zeros(width)
@@ -34,6 +36,10 @@ def calculateHistogram(image):
 	x = np.diff(hlines)
 	return (getMinMaxIndex(x), getMinMaxIndex(y))
 
+# Makes a copy of input image, applies a median blur
+# to cartoon-ify the image. It gets rid of noise and
+# not wanted colors. Calculates histogram of green color 
+# and draw edges of a board
 def cartoonify(image):
 	out = image.copy()
 	out = cv.medianBlur(image, 5)
