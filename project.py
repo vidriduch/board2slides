@@ -1,11 +1,25 @@
 #!/usr/bin/env python
+import functools
+import time
 import sys
 import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
+def timeit(func):
+	@functools.wraps(func)
+	def newfunc(*args, **kwargs):
+	    startTime = time.time()
+	    out = func(*args, **kwargs)
+	    elapsedTime = time.time() - startTime
+	    print('function [{}] finished in {} ms'.format(
+	        func.__name__, int(elapsedTime * 1000)))
+ 	    return out
+	return newfunc
 
 # Returns index of highest and lowest
 # element in a array
+
+@timeit
 def getMinMaxIndex(arr):
 	max = arr[0]
 	min = arr[0]
@@ -22,6 +36,7 @@ def getMinMaxIndex(arr):
 
 # Gets values of green in a image, calculates difference and
 # returns pixels with highest and lowest values
+@timeit
 def calculateHistogram(image):
 	(width, height, _) = image.shape
 	vlines = np.zeros(width)
@@ -40,6 +55,7 @@ def calculateHistogram(image):
 # to cartoon-ify the image. It gets rid of noise and
 # not wanted colors. Calculates histogram of green color 
 # and draw edges of a board
+@timeit
 def cartoonify(image):
 	out = image.copy()
 	out = cv.medianBlur(image, 5)
