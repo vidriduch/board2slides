@@ -29,25 +29,37 @@ def find_indexes(arr):
     max = np.argmax(arr)
     return (min, max)
 
+def nothing(x):
+    pass
 
 @timeit
 def calculate_histogram(image):
     """
     Gets values of green in a image, calculates difference and returns
     pixels with highest and lowest values.
-
     """
-    (width, height, _) = image.shape
-    vlines = np.zeros(width)
-    hlines = np.zeros(height)
-    for x in range(width):
-        for y in range(height):
-            if 100 < image[x][y][2] < 256:
-                hlines[y] += 1
-                vlines[x] += 1
-
-    y = np.diff(vlines)
-    x = np.diff(hlines)
+    x = 5
+    y = 4
+    image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
+    cv.imshow("hsv", image)
+    h,s,v = 100,100,100
+    #create window
+    cv.namedWindow('result')
+    #create trackbars
+    cv.createTrackbar('h', 'result', 0, 179, nothing)
+    cv.createTrackbar('s', 'result', 0, 255, nothing)
+    cv.createTrackbar('v', 'result', 0, 255, nothing)
+    while(1):
+        h = cv.getTrackbarPos('h', 'result')
+        s = cv.getTrackbarPos('s', 'result')
+        v = cv.getTrackbarPos('v', 'result')
+        lower_value = np.array([h,s,v])
+        upper_value = np.array([180,255,255])
+        mask = cv.inRange(image, lower_value, upper_value)
+        cv.imshow('result', mask)
+        k = cv.waitKey(5) & 0xFF
+        if k == 27:
+            break
     return (find_indexes(x), find_indexes(y))
 
 
