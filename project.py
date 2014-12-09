@@ -61,8 +61,7 @@ def calculate_histogram(image):
     global h, s, v, H, S, V
     x = 5
     y = 4
-    image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
-    cv.imshow("hsv", image)
+    original_image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
 
     # create window
     cv.namedWindow('result')
@@ -84,8 +83,22 @@ def calculate_histogram(image):
 
         lower_value = np.array([h, s, v])
         upper_value = np.array([H, S, V])
-        mask = cv.inRange(image, lower_value, upper_value)
+        mask = cv.inRange(original_image, lower_value, upper_value)
         cv.imshow('result', mask)
+        (cnts, _) = cv.findContours(mask.copy(), cv.RETR_TREE,
+                                    cv.CHAIN_APPROX_SIMPLE)
+        cnts = sorted(cnts, key=cv.contourArea, reverse=True)[:10]
+        our_cnt = None
+        for c in cnts:
+            peri = cv.arcLength(c, True)
+            approx = cv.approxPolyDP(c, 0.02 * peri, True)
+            if len(approx) == 4:
+                our_cnt = approx
+                break
+
+        hsv_img = original_image.copy()
+        cv.drawContours(hsv_img, [our_cnt], -1, (0, 255, 0), 3)
+        cv.imshow("hsv", hsv_img)
         k = cv.waitKey(5) & 0xFF
         if k == 27:
             break
