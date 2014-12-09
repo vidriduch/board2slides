@@ -53,7 +53,13 @@ def nothing(x):
 
 @timeit
 def find_board(image):
-    (cnts, _) = cv.findContours(image, cv.RETR_TREE,
+    global h, s, v, H, S, V
+    original_image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
+    lower_value = np.array([h, s, v])
+    upper_value = np.array([H, S, V])
+    mask = cv.inRange(original_image, lower_value, upper_value)
+
+    (cnts, _) = cv.findContours(mask, cv.RETR_TREE,
                                 cv.CHAIN_APPROX_SIMPLE)
     cnts = sorted(cnts, key=cv.contourArea, reverse=True)[:10]
     our_cnt = None
@@ -101,7 +107,7 @@ def calculate_histogram(image):
         mask = cv.inRange(original_image, lower_value, upper_value)
         cv.imshow('result', mask)
 
-        our_cnt = find_board(mask.copy())
+        our_cnt = find_board(original_image)
 
         hsv_img = original_image.copy()
         cv.drawContours(hsv_img, [our_cnt], -1, (0, 255, 0), 3)
