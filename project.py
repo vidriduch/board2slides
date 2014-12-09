@@ -5,6 +5,24 @@ import sys
 import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
+import yaml
+
+h, s, v, H, S, V = 0, 0, 0, 180, 255, 255
+
+
+def load_config():
+    global h, s, v, H, S, V
+    with open('config.tsv') as f:
+        out = f.read().strip().split('\t')
+        print out, map(int, out)
+        if len(out) == 6:
+            h, s, v, H, S, V = map(int, out)
+
+
+def save_config():
+    global h, s, v, H, S, V
+    with open('config.tsv', 'w') as f:
+        f.write('\t'.join(map(str, [h, s, v, H, S, V])))
 
 
 def timeit(func):
@@ -29,8 +47,10 @@ def find_indexes(arr):
     max = np.argmax(arr)
     return (min, max)
 
+
 def nothing(x):
-    pass
+    save_config()
+
 
 @timeit
 def calculate_histogram(image):
@@ -38,23 +58,32 @@ def calculate_histogram(image):
     Gets values of green in a image, calculates difference and returns
     pixels with highest and lowest values.
     """
+    global h, s, v, H, S, V
     x = 5
     y = 4
     image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
     cv.imshow("hsv", image)
-    h,s,v = 100,100,100
-    #create window
+
+    # create window
     cv.namedWindow('result')
-    #create trackbars
-    cv.createTrackbar('h', 'result', 0, 179, nothing)
-    cv.createTrackbar('s', 'result', 0, 255, nothing)
-    cv.createTrackbar('v', 'result', 0, 255, nothing)
+
+    # create trackbars
+    cv.createTrackbar('h', 'result', h, 179, nothing)
+    cv.createTrackbar('s', 'result', s, 255, nothing)
+    cv.createTrackbar('v', 'result', v, 255, nothing)
+    cv.createTrackbar('H', 'result', H, 179, nothing)
+    cv.createTrackbar('S', 'result', S, 255, nothing)
+    cv.createTrackbar('V', 'result', V, 255, nothing)
     while(1):
         h = cv.getTrackbarPos('h', 'result')
         s = cv.getTrackbarPos('s', 'result')
         v = cv.getTrackbarPos('v', 'result')
-        lower_value = np.array([h,s,v])
-        upper_value = np.array([180,255,255])
+        H = cv.getTrackbarPos('H', 'result')
+        S = cv.getTrackbarPos('S', 'result')
+        V = cv.getTrackbarPos('V', 'result')
+
+        lower_value = np.array([h, s, v])
+        upper_value = np.array([H, S, V])
         mask = cv.inRange(image, lower_value, upper_value)
         cv.imshow('result', mask)
         k = cv.waitKey(5) & 0xFF
@@ -83,6 +112,7 @@ def cartoonify(image):
 
 def main(inputFile):
     im = cv.imread(inputFile, cv.CV_LOAD_IMAGE_COLOR)
+    load_config()
     # cartoon-ify image
     cartoonify(im)
     # show image
