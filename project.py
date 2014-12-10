@@ -11,15 +11,20 @@ h, s, v, H, S, V = 0, 0, 0, 180, 255, 255
 
 
 def load_config():
+    """
+    Loads hsv values for image tresholding from config.
+    """
     global h, s, v, H, S, V
     with open('config.tsv') as f:
         out = f.read().strip().split('\t')
-        print out, map(int, out)
         if len(out) == 6:
             h, s, v, H, S, V = map(int, out)
 
 
 def save_config():
+    """
+    Saves trackbar tresholding hsv values to config file.
+    """
     global h, s, v, H, S, V
     with open('config.tsv', 'w') as f:
         f.write('\t'.join(map(str, [h, s, v, H, S, V])))
@@ -37,15 +42,45 @@ def timeit(func):
     return newfunc
 
 
-def nothing(x):
+def trackbar_callback(x):
+    """
+    Callback for trackbars. 
+    Stores values of current state of trackbars.
+    """
     save_config()
+
+@timeit
+def find_board(image):
+    """
+    Finds a board by calling openCV function to find contures in image.
+    Than it sorts those contures and stores the biggest one. 
+    In case there is more than one we go over all found contures and 
+    keep only one with 4 points.
+    """
+    (cnts, _) = cv.findContours(image, cv.RETR_TREE,
+                                    cv.CHAIN_APPROX_SIMPLE)
+    cnts = sorted(cnts, key=cv.contourArea, reverse=True)[:10]
+    our_cnt = None
+    for c in cnts:
+        peri = cv.arcLength(c, True)
+        approx = cv.approxPolyDP(c, 0.02 * peri, True)
+        if len(approx) == 4:
+            our_cnt = approx
+            break
+    
+    return our_cnt
+
+
 
 
 @timeit
-def calculate_histogram(image):
+def find_and_draw_edges(image, origin):
     """
-    Gets values of green in a image, calculates difference and returns
-    pixels with highest and lowest values.
+    Transforms color space of original image from BGR to HSV.
+    Creates a window with trackbars to adjust hsv values and to show mask image.
+    Tresholds image to get only green parts of original image.
+    Calls function find_board which returns conture of a board. 
+    Draws conture of board.
     """
     global h, s, v, H, S, V
 
@@ -55,12 +90,12 @@ def calculate_histogram(image):
     cv.namedWindow('result')
 
     # create trackbars
-    cv.createTrackbar('h', 'result', h, 179, nothing)
-    cv.createTrackbar('s', 'result', s, 255, nothing)
-    cv.createTrackbar('v', 'result', v, 255, nothing)
-    cv.createTrackbar('H', 'result', H, 179, nothing)
-    cv.createTrackbar('S', 'result', S, 255, nothing)
-    cv.createTrackbar('V', 'result', V, 255, nothing)
+    cv.createTrackbar('h', 'result', h, 179, trackbar_callback)
+    cv.createTrackbar('s', 'result', s, 255, trackbar_callback)
+    cv.createTrackbar('v', 'result', v, 255, trackbar_callback)
+    cv.createTrackbar('H', 'result', H, 179, trackbar_callback)
+    cv.createTrackbar('S', 'result', S, 255, trackbar_callback)
+    cv.createTrackbar('V', 'result', V, 255, trackbar_callback)
     while(1):
         h = cv.getTrackbarPos('h', 'result')
         s = cv.getTrackbarPos('s', 'result')
@@ -73,20 +108,12 @@ def calculate_histogram(image):
         upper_value = np.array([H, S, V])
         mask = cv.inRange(original_image, lower_value, upper_value)
         cv.imshow('result', mask)
-        (cnts, _) = cv.findContours(mask.copy(), cv.RETR_TREE,
-                                    cv.CHAIN_APPROX_SIMPLE)
-        cnts = sorted(cnts, key=cv.contourArea, reverse=True)[:10]
-        our_cnt = None
-        for c in cnts:
-            peri = cv.arcLength(c, True)
-            approx = cv.approxPolyDP(c, 0.02 * peri, True)
-            if len(approx) == 4:
-                our_cnt = approx
-                break
-
-        hsv_img = original_image.copy()
-        cv.drawContours(hsv_img, [our_cnt], -1, (0, 255, 0), 3)
-        cv.imshow("hsv", hsv_img)
+        
+        our_cnt = find_board(mask.copy())
+        
+        img = origin.copy()
+        cv.drawContours(img, [our_cnt], -1, (0, 255, 0), 3)
+        cv.imshow("img", img)
         k = cv.waitKey(5) & 0xFF
         if k == 27:
             break
@@ -96,12 +123,12 @@ def calculate_histogram(image):
 def cartoonify(image):
     """
     Makes a copy of input image, applies a median blur to cartoon-ify the
-    image. It gets rid of noise and not wanted colors. Calculates histogram of
-    green color and draws edges of a board.
+    image. It gets rid of noise and not wanted colors. Calls function which will 
+    find a board and draw edges of that board to original image.
     """
     out = image.copy()
     out = cv.medianBlur(image, 5)
-    calculate_histogram(out)
+    find_and_draw_edges(out, image)
 
 
 def main(inputFile):
