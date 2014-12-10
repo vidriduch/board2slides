@@ -7,6 +7,21 @@ import numpy as np
 from matplotlib import pyplot as plt
 import yaml
 
+
+def timeit(func):
+    """
+    Profiling function to measure time it takes to finish function.
+    """
+    @functools.wraps(func)
+    def newfunc(*args, **kwargs):
+        startTime = time.time()
+        out = func(*args, **kwargs)
+        elapsedTime = time.time() - startTime
+        print('function [{}] finished in {} ms'.format(
+                func.__name__, int(elapsedTime * 1000)))
+        return out
+    return newfunc
+
 class BoardSearcher:
 
     h, s, v, H, S, V = 0, 0, 0, 180, 255, 255
@@ -31,21 +46,6 @@ class BoardSearcher:
         with open('config.tsv', 'w') as f:
             f.write('\t'.join(map(str, [self.h, self.s, self.v, 
                                             self.H, self.S, self.V])))
-
-
-    def timeit(func):
-        """
-        Profiling function to measure time it takes to finish function.
-        """
-        @functools.wraps(func)
-        def newfunc(*args, **kwargs):
-            startTime = time.time()
-            out = func(*args, **kwargs)
-            elapsedTime = time.time() - startTime
-            print('function [{}] finished in {} ms'.format(
-                func.__name__, int(elapsedTime * 1000)))
-            return out
-        return newfunc
 
 
     def trackbar_callback(self, x):
@@ -117,7 +117,7 @@ class BoardSearcher:
             mask = self.get_mask(original_image)
             cv.imshow('result', mask)
         
-            our_cnt = self.find_board(mask.copy())
+            our_cnt = self.find_board(mask)
         
             img = origin.copy()
             cv.drawContours(img, [our_cnt], -1, (0, 255, 0), 3)
