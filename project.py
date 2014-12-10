@@ -36,17 +36,6 @@ def timeit(func):
     return newfunc
 
 
-@timeit
-def find_indexes(arr):
-    """
-    Returns index of highest and lowest element in a array.
-    """
-
-    min = np.argmin(arr)
-    max = np.argmax(arr)
-    return (min, max)
-
-
 def nothing(x):
     save_config()
 
@@ -80,8 +69,7 @@ def calculate_histogram(image):
     pixels with highest and lowest values.
     """
     global h, s, v, H, S, V
-    x = 5
-    y = 4
+
     original_image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
 
     # create window
@@ -115,7 +103,6 @@ def calculate_histogram(image):
         k = cv.waitKey(5) & 0xFF
         if k == 27:
             break
-    return (find_indexes(x), find_indexes(y))
 
 
 @timeit
@@ -125,15 +112,9 @@ def cartoonify(image):
     image. It gets rid of noise and not wanted colors. Calculates histogram of
     green color and draws edges of a board.
     """
-
     out = image.copy()
     out = cv.medianBlur(image, 5)
-    (x, y) = calculate_histogram(out)
-    # draw edges of a board
-    cv.circle(image, (x[1], y[0]), 5, (0, 0, 255), -1)
-    cv.circle(image, (x[1], y[1]), 5, (0, 0, 255), -1)
-    cv.circle(image, (x[0], y[0]), 5, (0, 0, 255), -1)
-    cv.circle(image, (x[0], y[1]), 5, (0, 0, 255), -1)
+    calculate_histogram(out)
 
 
 def main(inputFile):
@@ -141,9 +122,6 @@ def main(inputFile):
     load_config()
     # cartoon-ify image
     cartoonify(im)
-    # show image
-    cv.imshow("project", im)
-    cv.waitKey(0)
     cv.destroyAllWindows()
 
 if __name__ == '__main__':
