@@ -31,6 +31,9 @@ def save_config():
 
 
 def timeit(func):
+    """
+    Profiling function to measure time it takes to finish function.
+    """
     @functools.wraps(func)
     def newfunc(*args, **kwargs):
         startTime = time.time()
