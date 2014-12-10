@@ -14,6 +14,7 @@ def load_config():
     global h, s, v, H, S, V
     with open('config.tsv') as f:
         out = f.read().strip().split('\t')
+        print out, map(int, out)
         if len(out) == 6:
             h, s, v, H, S, V = map(int, out)
 
@@ -38,28 +39,6 @@ def timeit(func):
 
 def nothing(x):
     save_config()
-
-
-@timeit
-def find_board(image):
-    global h, s, v, H, S, V
-    original_image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
-    lower_value = np.array([h, s, v])
-    upper_value = np.array([H, S, V])
-    mask = cv.inRange(original_image, lower_value, upper_value)
-
-    (cnts, _) = cv.findContours(mask, cv.RETR_TREE,
-                                cv.CHAIN_APPROX_SIMPLE)
-    cnts = sorted(cnts, key=cv.contourArea, reverse=True)[:10]
-    our_cnt = None
-    for c in cnts:
-        peri = cv.arcLength(c, True)
-        approx = cv.approxPolyDP(c, 0.02 * peri, True)
-        if len(approx) == 4:
-            our_cnt = approx
-            break
-
-    return our_cnt
 
 
 @timeit
@@ -94,8 +73,16 @@ def calculate_histogram(image):
         upper_value = np.array([H, S, V])
         mask = cv.inRange(original_image, lower_value, upper_value)
         cv.imshow('result', mask)
-
-        our_cnt = find_board(original_image)
+        (cnts, _) = cv.findContours(mask.copy(), cv.RETR_TREE,
+                                    cv.CHAIN_APPROX_SIMPLE)
+        cnts = sorted(cnts, key=cv.contourArea, reverse=True)[:10]
+        our_cnt = None
+        for c in cnts:
+            peri = cv.arcLength(c, True)
+            approx = cv.approxPolyDP(c, 0.02 * peri, True)
+            if len(approx) == 4:
+                our_cnt = approx
+                break
 
         hsv_img = original_image.copy()
         cv.drawContours(hsv_img, [our_cnt], -1, (0, 255, 0), 3)
