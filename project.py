@@ -76,13 +76,21 @@ class BoardSearcher:
     
         return our_cnt
 
+    def get_mask(self, image):
+        """
+        Returns mask of image.
+        """
+        lower_value = np.array([self.h, self.s, self.v])
+        upper_value = np.array([self.H, self.S, self.V])
+        return cv.inRange(image, lower_value, upper_value)
 
     @timeit
     def find_and_draw_edges(self, image, origin):
         """
         Transforms color space of original image from BGR to HSV.
-        Creates a window with trackbars to adjust hsv values and to show mask image.
-        Tresholds image to get only green parts of original image.
+        Creates a window with trackbars to adjust hsv values 
+        and to show mask image. Tresholds image to get only green 
+        parts of original image.
         Calls function find_board which returns conture of a board. 
         Draws conture of board.
         """
@@ -106,9 +114,7 @@ class BoardSearcher:
             self.S = cv.getTrackbarPos('S', 'result')
             self.V = cv.getTrackbarPos('V', 'result')
 
-            lower_value = np.array([self.h, self.s, self.v])
-            upper_value = np.array([self.H, self.S, self.V])
-            mask = cv.inRange(original_image, lower_value, upper_value)
+            mask = self.get_mask(original_image)
             cv.imshow('result', mask)
         
             our_cnt = self.find_board(mask.copy())
@@ -123,14 +129,25 @@ class BoardSearcher:
     @timeit
     def get_board(self, image):
         """
-        Makes a copy of input image, applies a median blur to cartoon-ify the
-        image. It gets rid of noise and not wanted colors. Calls function which will 
-        find a board and draw edges of that board to original image.
+        Makes a copy of input image, applies median blur to cartoon-ify
+        image. It gets rid of noise and not wanted colors.
+        Calls function which will find a board and 
+        draw edges of that board to original image.
         """
         out = image.copy()
         out = cv.medianBlur(image, 5)
         self.find_and_draw_edges(out, image)
         cv.destroyAllWindows()
+    
+    @timeit
+    def get_conture(self, image):
+        """
+        Returns conture of given image.
+        """
+        hsv_image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
+        mask = self.get_mask(hsv_image)
+        return self.find_board(mask)
+        
 
 def main(inputFile):
     im = cv.imread(inputFile, cv.CV_LOAD_IMAGE_COLOR)
