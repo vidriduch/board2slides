@@ -17,8 +17,8 @@ def timeit(func):
         startTime = time.time()
         out = func(*args, **kwargs)
         elapsedTime = time.time() - startTime
-        #print('function [{}] finished in {} ms'.format(
-        #        func.__name__, int(elapsedTime * 1000)))
+        print('function [{}] finished in {} ms'.format(
+                func.__name__, int(elapsedTime * 1000)))
         return out
     return newfunc
 
@@ -85,6 +85,13 @@ class BoardSearcher:
         return cv.inRange(image, lower_value, upper_value)
 
     def create_trackbars(self):
+        """
+        Creates window for displaying trackbars and mask of image
+        """
+        
+        # create window
+        cv.namedWindow('result')
+
         cv.createTrackbar('h', 'result', self.h, 179, self.trackbar_callback)
         cv.createTrackbar('s', 'result', self.s, 255, self.trackbar_callback)
         cv.createTrackbar('v', 'result', self.v, 255, self.trackbar_callback)
@@ -170,10 +177,7 @@ class BoardSearcher:
 image_extension_list = ["jpg", "gif", "png"]
 video_extension_list = ["mkv", "wmv", "avi", "mp4"]
 def main(inputFile):
-
-    # create window
-    cv.namedWindow('result')
-    
+   
     board = BoardSearcher()    
 
     if(any(inputFile[-3:] == i for i in video_extension_list)):
