@@ -63,13 +63,14 @@ class BoardSearcher:
         In case there is more than one we go over all found contures and 
         keep only one with 4 points.
         """
-        (cnts, _) = cv.findContours(image, cv.RETR_TREE,
-                                        cv.CHAIN_APPROX_SIMPLE)
+        (cnts, _) = cv.findContours(image,
+                                    cv.RETR_TREE,
+                                    cv.CHAIN_APPROX_SIMPLE)
         cnts = sorted(cnts, key=cv.contourArea, reverse=True)[:10]
         our_cnt = None
         for c in cnts:
             peri = cv.arcLength(c, True)
-            approx = cv.approxPolyDP(c, 0.02 * peri, True)
+            approx = cv.approxPolyDP(c, 0.1 * peri, True)
             if len(approx) == 4:
                 our_cnt = approx
                 break
@@ -159,7 +160,7 @@ class BoardSearcher:
             if cv.waitKey(1) & 0xFF == 27:
                 break
 
-    @timeit
+    
     def video_search(self, video):
         """
         Main video search function.
@@ -176,9 +177,11 @@ class BoardSearcher:
 
 image_extension_list = ["jpg", "gif", "png"]
 video_extension_list = ["mkv", "wmv", "avi", "mp4"]
+
+
 def main(inputFile):
    
-    board = BoardSearcher()    
+    board = BoardSearcher()
 
     if(any(inputFile[-3:] == i for i in video_extension_list)):
         board.video_search(inputFile)
@@ -186,7 +189,7 @@ def main(inputFile):
         board.image_search(inputFile)
     else:
         print "Unrecognized file format"
-    cv.destroyAllWindows()   
+    cv.destroyAllWindows()
 
 if __name__ == '__main__':
     main(sys.argv[1])
