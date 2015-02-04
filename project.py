@@ -14,20 +14,21 @@ def timeit(func):
     """
     @functools.wraps(func)
     def newfunc(*args, **kwargs):
-        startTime = time.time()
+        start_time = time.time()
         out = func(*args, **kwargs)
-        elapsedTime = time.time() - startTime
-        print('function [{}] finished in {} ms'.format(
-                func.__name__, int(elapsedTime * 1000)))
+        elapsed_time = time.time() - start_time
+        msg = 'function [{}] finished in {} ms'
+        print(msg.format(func.__name__, int(elapsed_time * 1000)))
         return out
     return newfunc
+
 
 class BoardSearcher:
 
     h, s, v, H, S, V = 0, 0, 0, 180, 255, 255
 
     def __init__(self):
-       self.load_config()
+        self.load_config()
 
     def load_config(self):
         """
@@ -38,19 +39,17 @@ class BoardSearcher:
             if len(out) == 6:
                 self.h, self.s, self.v, self.H, self.S, self.V = map(int, out)
 
-
     def save_config(self):
         """
         Saves trackbar tresholding hsv values to config file.
         """
         with open('config.tsv', 'w') as f:
-            f.write('\t'.join(map(str, [self.h, self.s, self.v, 
-                                            self.H, self.S, self.V])))
-
+            f.write('\t'.join(map(str, [self.h, self.s, self.v,
+                                        self.H, self.S, self.V])))
 
     def trackbar_callback(self, x):
         """
-        Callback for trackbars. 
+        Callback for trackbars.
         Stores values of current state of trackbars.
         """
         self.save_config()
@@ -59,8 +58,8 @@ class BoardSearcher:
     def find_board(self, image):
         """
         Finds a board by calling openCV function to find contures in image.
-        Than it sorts those contures and stores the biggest one. 
-        In case there is more than one we go over all found contures and 
+        Than it sorts those contures and stores the biggest one.
+        In case there is more than one we go over all found contures and
         keep only one with 4 points.
         """
         (cnts, _) = cv.findContours(image,
@@ -74,7 +73,7 @@ class BoardSearcher:
             if len(approx) == 4:
                 our_cnt = approx
                 break
-    
+
         return our_cnt
 
     def get_mask(self, image):
@@ -89,7 +88,7 @@ class BoardSearcher:
         """
         Creates window for displaying trackbars and mask of image
         """
-        
+
         # create window
         cv.namedWindow('result')
 
@@ -104,10 +103,10 @@ class BoardSearcher:
     def find_and_draw_edges(self, image, origin):
         """
         Transforms color space of original image from BGR to HSV.
-        Creates a window with trackbars to adjust hsv values 
-        and to show mask image. Tresholds image to get only green 
+        Creates a window with trackbars to adjust hsv values
+        and to show mask image. Tresholds image to get only green
         parts of original image.
-        Calls function find_board which returns conture of a board. 
+        Calls function find_board which returns conture of a board.
         Draws conture of board.
         """
         original_image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
@@ -121,9 +120,9 @@ class BoardSearcher:
 
         mask = self.get_mask(original_image)
         cv.imshow('result', mask)
-        
+
         our_cnt = self.find_board(mask)
-        
+
         img = origin.copy()
         cv.drawContours(img, [our_cnt], -1, (0, 255, 0), 3)
         cv.imshow("img", img)
@@ -133,12 +132,12 @@ class BoardSearcher:
         """
         Makes a copy of input image, applies median blur to cartoon-ify
         image. It gets rid of noise and not wanted colors.
-        Calls function which will find a board and 
+        Calls function which will find a board and
         draw edges of that board to original image.
         """
         out = cv.medianBlur(image, 5)
         self.find_and_draw_edges(out, image)
-    
+
     @timeit
     def get_conture(self, image):
         """
@@ -160,7 +159,6 @@ class BoardSearcher:
             if cv.waitKey(1) & 0xFF == 27:
                 break
 
-    
     def video_search(self, video):
         """
         Main video search function.
@@ -180,7 +178,6 @@ video_extension_list = ["mkv", "wmv", "avi", "mp4"]
 
 
 def main(inputFile):
-   
     board = BoardSearcher()
 
     if(any(inputFile[-3:] == i for i in video_extension_list)):
