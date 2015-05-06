@@ -25,7 +25,7 @@ def timeit(func):
 
 class BoardSearcher:
 
-    h, s, v, H, S, V = 0, 0, 0, 180, 255, 255
+    lo, hi = 0, 0 
 
     def __init__(self):
         self.load_config()
@@ -36,16 +36,15 @@ class BoardSearcher:
         """
         with open('config.tsv') as f:
             out = f.read().strip().split('\t')
-            if len(out) == 6:
-                self.h, self.s, self.v, self.H, self.S, self.V = map(int, out)
+            if len(out) == 2:
+                self.lo, self.hi = map(int, out)
 
     def save_config(self):
         """
         Saves trackbar tresholding hsv values to config file.
         """
         with open('config.tsv', 'w') as f:
-            f.write('\t'.join(map(str, [self.h, self.s, self.v,
-                                        self.H, self.S, self.V])))
+            f.write('\t'.join(map(str, [self.lo, self.hi])))
 
     def trackbar_callback(self, x):
         """
@@ -54,7 +53,6 @@ class BoardSearcher:
         """
         self.save_config()
 
-    @timeit
     def find_board(self, image):
         """
         Finds a board by calling openCV function to find contures in image.
@@ -78,28 +76,38 @@ class BoardSearcher:
 
     def get_mask(self, image):
         """
-        Returns mask of image.
+        Returns mask of image. We use floodfill algorithm that
+        compares 4 neighboring pixels and based on specified
+        threashold fills mask image that is bigger by two pixels
+        in every direction with white color and than we remove
+        left noise by running dilation.
         """
-        lower_value = np.array([self.h, self.s, self.v])
-        upper_value = np.array([self.H, self.S, self.V])
-        return cv.inRange(image, lower_value, upper_value)
+        h, w = image.shape[:2]
+        mask = np.zeros((h+2, w+2), np.uint8)
+        connectivity = 4
+        mask[:] = 0
+        self.lo = cv.getTrackbarPos('lo', 'result')
+        self.hi = cv.getTrackbarPos('hi', 'result')
+        flags = connectivity
+        flags |= cv.FLOODFILL_MASK_ONLY
+        flags |= 255 << 8
+        seed = (100, 100)
+        cv.floodFill(image, mask, seed, (255,255,255), (self.lo,)*3,
+                        (self.hi,)*3, flags)
+        kernel = np.ones((5,5), np.uint8)
+        mask = cv.dilate(mask, kernel, iterations = 3)
+        return mask
 
     def create_trackbars(self):
         """
         Creates window for displaying trackbars and mask of image
         """
-
         # create window
         cv.namedWindow('result')
+    	cv.createTrackbar('lo', 'result', self.lo, 255, self.trackbar_callback)
+        cv.createTrackbar('hi', 'result', self.hi, 255, self.trackbar_callback)
+	
 
-        cv.createTrackbar('h', 'result', self.h, 179, self.trackbar_callback)
-        cv.createTrackbar('s', 'result', self.s, 255, self.trackbar_callback)
-        cv.createTrackbar('v', 'result', self.v, 255, self.trackbar_callback)
-        cv.createTrackbar('H', 'result', self.H, 179, self.trackbar_callback)
-        cv.createTrackbar('S', 'result', self.S, 255, self.trackbar_callback)
-        cv.createTrackbar('V', 'result', self.V, 255, self.trackbar_callback)
-
-    @timeit
     def find_and_draw_edges(self, image, origin):
         """
         Transforms color space of original image from BGR to HSV.
@@ -109,16 +117,7 @@ class BoardSearcher:
         Calls function find_board which returns conture of a board.
         Draws conture of board.
         """
-        original_image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
-
-        self.h = cv.getTrackbarPos('h', 'result')
-        self.s = cv.getTrackbarPos('s', 'result')
-        self.v = cv.getTrackbarPos('v', 'result')
-        self.H = cv.getTrackbarPos('H', 'result')
-        self.S = cv.getTrackbarPos('S', 'result')
-        self.V = cv.getTrackbarPos('V', 'result')
-
-        mask = self.get_mask(original_image)
+        mask = self.get_mask(image)
         cv.imshow('result', mask)
 
         our_cnt = self.find_board(mask)
@@ -127,7 +126,6 @@ class BoardSearcher:
         cv.drawContours(img, [our_cnt], -1, (0, 255, 0), 3)
         cv.imshow("img", img)
 
-    @timeit
     def get_board(self, image):
         """
         Makes a copy of input image, applies median blur to cartoon-ify
@@ -138,7 +136,6 @@ class BoardSearcher:
         out = cv.medianBlur(image, 5)
         self.find_and_draw_edges(out, image)
 
-    @timeit
     def get_conture(self, image):
         """
         Returns conture of given image.
@@ -147,12 +144,14 @@ class BoardSearcher:
         mask = self.get_mask(hsv_image)
         return self.find_board(mask)
 
-    @timeit
     def image_search(self, image):
         """
         Main image search function.
         """
         im = cv.imread(image, cv.CV_LOAD_IMAGE_COLOR)
+        if(im is None):
+            print "Can not open file."
+            return
         self.create_trackbars()
         while(True):
             self.get_board(im)
