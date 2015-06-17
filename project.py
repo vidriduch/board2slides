@@ -24,10 +24,10 @@ def timeit(func):
 
 
 class BoardSearcher:
-
-    lo, hi = 0, 0 
-
     def __init__(self):
+        self.width = None
+        self.height = None
+        self.saved_cnt = None
         self.load_config()
 
     def load_config(self):
@@ -69,7 +69,14 @@ class BoardSearcher:
             peri = cv.arcLength(c, True)
             approx = cv.approxPolyDP(c, 0.1 * peri, True)
             if len(approx) == 4:
-                our_cnt = approx
+                # The board needs to be at least 1/3 of the image size
+                min_size = np.array([self.height * 1/3.0, self.height * 1/3.9])
+
+                a = np.abs(approx[0] - approx[2])[0] > min_size
+                b = np.abs(approx[1] - approx[3])[0] > min_size
+                true = [True, True]
+                if np.array_equal(a, true) or np.array_equal(b, true):
+                    our_cnt = approx
                 break
 
         return our_cnt
@@ -92,10 +99,10 @@ class BoardSearcher:
         flags |= cv.FLOODFILL_MASK_ONLY
         flags |= 255 << 8
         seed = (100, 100)
-        cv.floodFill(image, mask, seed, (255,255,255), (self.lo,)*3,
-                        (self.hi,)*3, flags)
-        kernel = np.ones((5,5), np.uint8)
-        mask = cv.dilate(mask, kernel, iterations = 3)
+        cv.floodFill(image, mask, seed, (255, 255, 255), (self.lo,)*3,
+                     (self.hi,)*3, flags)
+        kernel = np.ones((1, 1), np.uint8)
+        mask = cv.dilate(mask, kernel, iterations=4)
         return mask
 
     def create_trackbars(self):
@@ -104,9 +111,8 @@ class BoardSearcher:
         """
         # create window
         cv.namedWindow('result')
-    	cv.createTrackbar('lo', 'result', self.lo, 255, self.trackbar_callback)
+        cv.createTrackbar('lo', 'result', self.lo, 255, self.trackbar_callback)
         cv.createTrackbar('hi', 'result', self.hi, 255, self.trackbar_callback)
-	
 
     def find_and_draw_edges(self, image, origin):
         """
@@ -122,6 +128,12 @@ class BoardSearcher:
 
         our_cnt = self.find_board(mask)
 
+        if our_cnt is None:
+            our_cnt = self.saved_cnt
+
+        if self.saved_cnt is None:
+            self.saved_cnt = our_cnt
+
         img = origin.copy()
         cv.drawContours(img, [our_cnt], -1, (0, 255, 0), 3)
         cv.imshow("img", img)
@@ -133,6 +145,9 @@ class BoardSearcher:
         Calls function which will find a board and
         draw edges of that board to original image.
         """
+        if self.width is None or self.height is None:
+            self.height, self.width = image.shape[:2]
+
         out = cv.medianBlur(image, 5)
         self.find_and_draw_edges(out, image)
 
