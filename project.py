@@ -24,9 +24,9 @@ def timeit(func):
 
 class BoardSearcher:
     def __init__(self, n_slides=0,
-                    frame_counter=0,
-                    save_interval=30,
-                    similarity=0.70):
+                 frame_counter=0,
+                 save_interval=30,
+                 similarity=0.70):
         self.width = None
         self.height = None
         self.saved_cnt = None
@@ -164,7 +164,7 @@ class BoardSearcher:
         we don't need to save else we save new image.
         """
         image_old = cv.imread("slide{0}.png".format(self.number_of_slides),
-                                cv.CV_LOAD_IMAGE_COLOR)
+                              cv.CV_LOAD_IMAGE_COLOR)
         mask_old = cv.imread("mask.png", cv.CV_LOAD_IMAGE_GRAYSCALE)
         if mask_old is None:
             return True
@@ -248,7 +248,7 @@ class BoardSearcher:
         warp, warp_mask = self.get_cropped_image(rect, image, mask)
 
         if(self.check_change(warp, warp_mask)):
-            cv.imwrite("slide.png".format(self.number_of_slides), warp)
+            cv.imwrite("slide{0}.png".format(self.number_of_slides), warp)
             cv.imwrite("mask.png", warp_mask)
             self.number_of_slides += 1
 
