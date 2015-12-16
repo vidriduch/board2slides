@@ -13,7 +13,7 @@ import argparse
 
 def timeit(func):
     """
-    Poors man's profiling function to
+    Poor man's profiling function to
     measure time it takes to finish function
     """
     @functools.wraps(func)
@@ -169,7 +169,7 @@ class BoardToolkit:
         """
         if(output_file is None):
             file_name = self.__get_file_name(input_file)
-            output_file = open("{}_meta.csv".format(file_name))
+            output_file = open("{}_meta.csv".format(file_name), 'wb+')
 
         if(input_file.endswith(self.video_extension_list)):
             self.write_video_metadata(input_file, output_file)
@@ -181,16 +181,16 @@ class BoardToolkit:
 
 def main(input_file, output_file=None):
     toolkit = BoardToolkit()
-    toolkit.write_metadata(input_file, output_file)
+    for file_name in input_file:
+        toolkit.write_metadata(file_name, output_file)
 
 if __name__ == '__main__':
-    desc = "Command line toolkit for creating board2slides dataset."
+    desc = "Command line toolkit for creating board2slides dataset"
     parser = argparse.ArgumentParser(description=desc)
-    parser.add_argument('filename', metavar='filename',
-                        type=argparse.FileType('rwb', 0),
-                        help='video or image file to process')
+    parser.add_argument('filename', metavar='filename', nargs='+',
+                        help='list of videos or images to process')
     parser.add_argument('-o', '--output-file', nargs='?',
                         type=argparse.FileType('wb', 0),
                         help='file where metadata will be dumped')
     args = parser.parse_args()
-    main(args.filename.name, args.output_file)
+    main(args.filename, args.output_file)
