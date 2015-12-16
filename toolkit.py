@@ -91,7 +91,7 @@ class BoardToolkit:
             image(numpy.ndarray): Loaded image
 
         Returns:
-            Coordinates of a boards corners
+            Board's corner coordinates
         """
         process_image = cv.medianBlur(image, 5)
         return self.get_board_boundaries(process_image)
@@ -101,7 +101,7 @@ class BoardToolkit:
         Args:
             path(string): Path to file
         Returns:
-            string: File name from path.
+            string: File name extracted from path
         """
         head, tail = ntpath.split(path)
         name = tail or ntpath.basename(head)
@@ -112,11 +112,11 @@ class BoardToolkit:
         Sets up a video capture and loops through all of the
         frames. Pulls frame metadata from every frame and stores
         it into an array. After we are done with a video we flush these
-        values to a file with frame index
+        values to a file
 
         Args:
             video(string): Name of video file to load
-            meta_file(string): Name of file where meta data will be stored
+            meta_file(string): Name of file where metadata will be stored
         """
         vid = cv.VideoCapture(video)
         if vid is None:
@@ -142,7 +142,7 @@ class BoardToolkit:
 
         Args:
             image(string): Name of image to load
-            meta_file(string): Name of file where meta data will be stored
+            meta_file(string): Name of file where metadata will be stored
         """
         im = cv.imread(image, cv.CV_LOAD_IMAGE_COLOR)
         if im is None:
@@ -164,7 +164,7 @@ class BoardToolkit:
 
         Args:
             input_file(string): Path to file to process
-            output_file(string): Path to output file where meta data
+            output_file(string): Path to output file where metadata
                                  will be stored
         """
         if(output_file is None):
@@ -191,6 +191,6 @@ if __name__ == '__main__':
                         help='list of videos or images to process')
     parser.add_argument('-o', '--output-file', nargs='?',
                         type=argparse.FileType('wb', 0),
-                        help='file where metadata will be dumped')
+                        help='file where metadata will be saved')
     args = parser.parse_args()
     main(args.filename, args.output_file)
