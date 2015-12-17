@@ -28,6 +28,9 @@ def timeit(func):
 
 
 class BoardToolkit:
+
+    video_extension_list = ("mkv", "wmv", "avi", "mp4")
+
     def __init__(self, lo_thresh=100, hi_thresh=255):
         """
         Args:
@@ -129,9 +132,9 @@ class BoardToolkit:
                 break
             (x, y) = self.get_table_metadata(frame)
             frames.append((x, y))
-        with meta_file as csvfile:
+        with open(meta_file, "wb+") as csvfile:
+            csv_writer = csv.writer(csvfile, lineterminator='\n')
             for i, frame in enumerate(frames):
-                csv_writer = csv.writer(csvfile, lineterminator='\n')
                 csv_writer.writerow([x[0], x[1], y[0], y[1]])
         vid.release()
 
@@ -149,11 +152,9 @@ class BoardToolkit:
             print("Couldn't read image file {}".format(image), file=sys.stderr)
             return
         (x, y) = self.get_table_metadata(im)
-        with meta_file as csvfile:
+        with open(meta_file, "wb+") as csvfile:
             csv_writer = csv.writer(csvfile, lineterminator='\n')
             csv_writer.writerow([x[0], x[1], y[0], y[1]])
-
-    video_extension_list = ("mkv", "wmv", "avi", "mp4")
 
     @timeit
     def write_metadata(self, input_file, output_file=None):
@@ -169,14 +170,17 @@ class BoardToolkit:
         """
         if(output_file is None):
             file_name = self.__get_file_name(input_file)
-            output_file = open("{}_meta.csv".format(file_name), 'wb+')
+            output_file = "{}_meta.csv".format(file_name)
 
-        if(input_file.endswith(self.video_extension_list)):
-            self.write_video_metadata(input_file, output_file)
-        elif (imghdr.what(input_file)):
-            self.write_image_metadata(input_file, output_file)
-        else:
-            print("Unrecognized file format", file=sys.stderr)
+        try:
+            if(input_file.endswith(self.video_extension_list)):
+                self.write_video_metadata(input_file, output_file)
+            elif (imghdr.what(input_file) is not None):
+                self.write_image_metadata(input_file, output_file)
+            else:
+                print("Unrecognized file format", file=sys.stderr)
+        except IOError:
+            print("Wrong file or path to file")
 
 
 def main(input_file, output_file=None):
@@ -190,7 +194,10 @@ if __name__ == '__main__':
     parser.add_argument('filename', metavar='filename', nargs='+',
                         help='list of videos or images to process')
     parser.add_argument('-o', '--output-file', nargs='?',
-                        type=argparse.FileType('wb', 0),
-                        help='file where metadata will be saved')
+                        help='''
+                             specify outputfile where metadata will be save
+                             (default: basename from input file with _meta
+                             sufix)
+                             ''')
     args = parser.parse_args()
     main(args.filename, args.output_file)
