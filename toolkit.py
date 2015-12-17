@@ -103,6 +103,7 @@ class BoardToolkit:
         """
         Args:
             path(string): Path to file
+
         Returns:
             string: File name extracted from path
         """
@@ -180,7 +181,7 @@ class BoardToolkit:
             else:
                 print("Unrecognized file format", file=sys.stderr)
         except IOError:
-            print("Wrong file or path to file")
+            print("Wrong file or path to file", file=sys.stderr)
 
 
 def main(input_file, output_file=None):

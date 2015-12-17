@@ -1,10 +1,12 @@
 #!/usr/bin/env python
+from __future__ import print_function
 import functools
 import time
 import sys
 import cv2 as cv
 import numpy as np
 from random import randint
+import imghdr
 
 
 def timeit(func):
@@ -23,6 +25,10 @@ def timeit(func):
 
 
 class BoardSearcher:
+
+    last_saved_slide = None
+    last_saved_slide_mask = None
+
     def __init__(self, n_slides=0,
                  frame_counter=0,
                  save_interval=30,
@@ -33,7 +39,8 @@ class BoardSearcher:
         self.seed = None
         self.number_of_slides = n_slides
         self.frame_counter = frame_counter
-        # how often run similarity check and save slide function in frames
+        # number of frames witch have to pass to run again check if
+        # current frame is similar to the last saved slide
         self.save_interval = save_interval
         # ratio of similarity between images based on witch we decide if we
         # are going to save an image
@@ -68,7 +75,13 @@ class BoardSearcher:
         Finds a board by calling openCV function to find contures in image.
         Than it sorts those contures and stores the biggest one.
         In case there is more than one we go over all found contures and
-        keep only one with 4 points.
+        keep only one with 4 points
+
+        Args:
+            image(numpy.ndarray): Image to find contures from
+
+        Returns:
+            Found conture on given image
         """
         im = image.copy()
         (cnts, _) = cv.findContours(im,
@@ -94,8 +107,15 @@ class BoardSearcher:
 
     def seed_filter(self, image, seed):
         """
-        My ghetto green filter that only checks if we really hit board.
-        So it checks if the green value of seed pixel is the highest.
+        My ghetto green filter that only checks if we really hit the board.
+        So it checks if the green value of seed pixel is the highest
+
+        Args:
+            image(numpy.ndarra): Image from witch we get seed values
+            seed(tuple): Seed point
+
+        Returns:
+            bool: True if found the board. False otherwise
         """
         rgb = image[self.seed[1], self.seed[0]]
         if rgb[1] > rgb[0] and rgb[1] > rgb[2]:
@@ -106,15 +126,21 @@ class BoardSearcher:
         """
         Tries to find good seed for flood fill algorithm by randomly picking
         a point somewhere in the middle of a image and then checking if its
-        value is correct.
+        value is correct
+
+        Args:
+            image(numpy.ndarray): Image to search in
+
+        Returns:
+            Coordinates of seed position
         """
         if self.seed is not None and self.seed_filter(image, self.seed):
             return self.seed
 
         h, w = image.shape[:2]
-        self.seed = (randint(w/4, (w/4)*3), randint(h/4, (h/4)*3))
         # three retries to find proper seed
         for i in xrange(1, 3):
+            self.seed = (randint(w/4, (w/4)*3), randint(h/4, (h/4)*3))
             if self.seed_filter(image, self.seed):
                 break
 
@@ -126,7 +152,13 @@ class BoardSearcher:
         compares 4 neighboring pixels and based on specified
         threashold fills mask image that is bigger by two pixels
         in every direction with white color and than we remove
-        left noise by running dilation.
+        left noise by running dilation
+
+        Args:
+            image(numpy.ndarray): Preprocessed image
+
+        Returns:
+            Mask of given image
         """
         h, w = image.shape[:2]
         mask = np.zeros((h+2, w+2), np.uint8)
@@ -155,44 +187,62 @@ class BoardSearcher:
 
     def check_change(self, image, mask):
         """
-        loads last slide and last image mask and perfroms bitwise
-        and betweed mask of current image and mask of last image
-        so we would get only mask with thing that are same on both pictures
-        and then applies this new mask to old image and current image and
-        tries to find keypoints and match them between images. If we match
+        Loads last slide and last image mask and perfroms bitwise &
+        between masks of current and last image and then applies
+        this new mask to old image and current image and tries to
+        find keypoints and match them between images. If we match
         more than set similarity then the pictures are almost the same and
-        we don't need to save else we save new image.
+        we don't have to save else we save new slide.
+
+        Args:
+            image(numpy.ndarray): Image to check
+            mask(numpy.ndarray): Mask of given image
+
+        Returns:
+            bool: True if images are the same. False otherwise
         """
-        image_old = cv.imread("slide{0}.png".format(self.number_of_slides),
-                              cv.CV_LOAD_IMAGE_COLOR)
-        mask_old = cv.imread("mask.png", cv.CV_LOAD_IMAGE_GRAYSCALE)
-        if mask_old is None:
+        if self.last_saved_slide is None or self.last_saved_slide_mask is None:
+            last_slide_name = "slide{}.png".format(self.number_of_slides)
+            self.last_saved_slide = cv.imread(last_slide_name,
+                                              cv.CV_LOAD_IMAGE_COLOR)
+            self.last_saved_slide_mask = cv.imread("mask.png",
+                                                   cv.CV_LOAD_IMAGE_GRAYSCALE)
+
+        if self.last_saved_slide_mask is None:
             return True
 
-        if mask.shape != mask_old.shape:
+        if mask.shape != self.last_saved_slide_mask.shape:
             return False
 
-        prepared_mask = cv.bitwise_and(mask_old, mask)
-        image_old = cv.bitwise_and(image_old, image_old, mask=prepared_mask)
+        prepared_mask = cv.bitwise_and(self.last_saved_slide_mask, mask)
+        self.last_saved_slide = cv.bitwise_and(self.last_saved_slide,
+                                               self.last_saved_slide,
+                                               mask=prepared_mask)
         check_image = cv.bitwise_and(image, image, mask=prepared_mask)
 
         orb = cv.ORB()
-        kp1, ds1 = orb.detectAndCompute(image_old, None)
+        kp1, ds1 = orb.detectAndCompute(self.last_saved_slide, None)
         kp2, ds2 = orb.detectAndCompute(check_image, None)
         bf = cv.BFMatcher(cv.NORM_HAMMING, crossCheck=True)
         matches = bf.match(ds1, ds2)
 
         val = float(len(matches))/len(kp1)
         if(val > self.similarity):
-            print "Is the same"
+            return False
 
-        return False
+        return True
 
-    def get_sorted_rectangle(self, cnt, image):
+    def get_sorted_rectangle(self, cnt):
         """
         Tries to determine witch corner is witch based on
         given conture and then sorts them in correct order so
-        we can use it latter to shift perspective of table.
+        we can use it latter to shift perspective of image
+
+        Args:
+            cnt(numpy.ndarray): Contures of a board
+
+        Returns:
+            Corectly sorted conture of a board
         """
         pts = cnt.reshape(4, 2)
         rect = np.zeros((4, 2), dtype="float32")
@@ -210,9 +260,16 @@ class BoardSearcher:
     def get_cropped_image(self, rect, image, mask):
         """
         Tries to crop the table from image and warps its perspective
-        so we would get table image as we would be standing in front of it.
-        And returns shifted perspective of croped table and its mask for
-        further processing and checking.
+        so we can get table image as if we are standing in front of it
+
+        Args:
+            rect(numpy.ndarray): Contures of a board
+            image(numpy.ndarray): Image to shift and crop from
+            mask(numpy.ndarray): Mask to shift
+
+        Returns:
+            Shifted perspective of croped table and its mask for
+            further processing and checking.
         """
         (tl, tr, br, bl) = rect
         width_a = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
@@ -240,29 +297,41 @@ class BoardSearcher:
         Handles writing images to the disk. Tries to extract only board
         from image based on given contures then it performs basic check
         how much is this image different from previous one. Based on
-        results decides to write or not.
+        results decides to write or not
+
+        Args:
+            cnt(numpy.ndarray): Contures of a board
+            image(numpy.ndarray): Image to compare and write
+            mask(numpy.ndarray): Mask of same areas of compared images
         """
         if cnt is None:
             return
-        rect = self.get_sorted_rectangle(cnt, image)
+        rect = self.get_sorted_rectangle(cnt)
         warp, warp_mask = self.get_cropped_image(rect, image, mask)
 
         if(self.check_change(warp, warp_mask)):
             cv.imwrite("slide{0}.png".format(self.number_of_slides), warp)
             cv.imwrite("mask.png", warp_mask)
+            self.last_saved_slide = warp
+            self.last_saved_slide_mask = warp_mask
             self.number_of_slides += 1
 
-    def find_and_draw_edges(self, image, origin):
+    def find_and_draw_edges(self, image, origin, debug=True):
         """
-        Transforms color space of original image from BGR to HSV.
+        Transforms color space of original image to HSV.
         Creates a window with trackbars to adjust hsv values
         and to show mask image. Thresholds image to get only green
         parts of original image.
         Calls function find_board which returns conture of a board.
-        Draws conture of board.
+        Draws conture of board
+
+        Args:
+            image(numpy.ndarray): Preprocessed image
+            origin(numpy.ndarray): Original loaded image
         """
         mask = self.get_mask(image)
-        cv.imshow('result', mask)
+        if debug:
+            cv.imshow('mask', mask)
         our_cnt = self.find_board(mask)
 
         if our_cnt is None:
@@ -277,20 +346,30 @@ class BoardSearcher:
             self.write_image(our_cnt, img, mask)
 
         self.frame_counter = (self.frame_counter + 1) % self.save_interval
-        cv.imshow("img", img)
+        if debug:
+            cv.imshow("img", img)
 
-    def preprocesing(self, image):
+    def preprocesing(self, image, debug=True):
         """
-        Maked a copy of input image then makes a threasholding operation
-        on input image so we would get mask of green areas. Then applying
+        Makes a copy of input image then makes a threasholding operation
+        so we can get mask of green areas. Then applies
         that mask to every channel of output image.
+
+        Args:
+            image(numpy.ndarray): Image to process
+            debug(bool): If true display debuging window
+
+        Returns:
+            Image with boosted green channel
         """
         im = image.copy()
         g_boost = cv.inRange(image, (0, 0, 0), (110, 255, 110))
         im[:, :, 0] = cv.bitwise_and(image[:, :, 0], g_boost)
         im[:, :, 1] = cv.bitwise_and(image[:, :, 1], g_boost)
         im[:, :, 2] = cv.bitwise_and(image[:, :, 2], g_boost)
-        cv.imshow("preprocesing", im)
+
+        if debug:
+            cv.imshow("preprocesing", im)
         return im
 
     def get_board(self, image):
@@ -298,7 +377,10 @@ class BoardSearcher:
         Makes a copy of input image, applies median blur to cartoon-ify
         image. It gets rid of noise and not wanted colors.
         Calls function which will find a board and
-        draw edges of that board to original image.
+        draw edges of that board to original image
+
+        Args:
+            image(numpy.ndarray): Image to process
         """
         if self.width is None or self.height is None:
             self.height, self.width = image.shape[:2]
@@ -309,7 +391,15 @@ class BoardSearcher:
 
     def get_conture(self, image):
         """
-        Returns conture of given image.
+        Function copies the image and transforms color space of
+        this copied image to HSV. Then gets mask and calls main
+        funtion for finding the board
+
+        Args:
+            image(numpy.ndarray): Loaded image
+
+        Returns:
+             Conture of given image
         """
         hsv_image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
         mask = self.get_mask(hsv_image)
@@ -317,11 +407,14 @@ class BoardSearcher:
 
     def image_search(self, image):
         """
-        Main image search function.
+        Main image search function
+
+        Args:
+            image(string): Path to image file to process
         """
         im = cv.imread(image, cv.CV_LOAD_IMAGE_COLOR)
         if(im is None):
-            print "Can not open file."
+            print("Can not open file.", file=sys.stderr)
             return
         self.create_trackbars()
         while(True):
@@ -331,7 +424,10 @@ class BoardSearcher:
 
     def video_search(self, video):
         """
-        Main video search function.
+        Main video search function
+
+        Args:
+            video(string): Path to video file to process
         """
         vid = cv.VideoCapture(video)
         self.create_trackbars()
@@ -343,20 +439,22 @@ class BoardSearcher:
         vid.release()
 
 
-image_extension_list = ["jpg", "gif", "png"]
-video_extension_list = ["mkv", "wmv", "avi", "mp4"]
+video_extension_list = ("mkv", "wmv", "avi", "mp4")
 
 
-def main(inputFile):
-    board = BoardSearcher(0, 0, 30, 0.70)
-
-    if(any(inputFile[-3:] == i for i in video_extension_list)):
-        board.video_search(inputFile)
-    elif (any(inputFile[-3:] == i for i in image_extension_list)):
-        board.image_search(inputFile)
-    else:
-        print "Unrecognized file format"
-    cv.destroyAllWindows()
+def main(input_file):
+    board = BoardSearcher(n_slides=0, frame_counter=0,
+                          save_interval=30, similarity=0.70)
+    try:
+        if (input_file.endswith(video_extension_list)):
+            board.video_search(input_file)
+        elif (imghdr.what is not None):
+            board.image_search(input_file)
+        else:
+            print("Unrecognized file format", file=sys.stderr)
+        cv.destroyAllWindows()
+    except IOError:
+        print("Wrong file or path to file", file=sys.stderr)
 
 if __name__ == '__main__':
     main(sys.argv[1])
