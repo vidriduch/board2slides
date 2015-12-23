@@ -7,6 +7,7 @@ import cv2 as cv
 import numpy as np
 from random import randint
 import imghdr
+import argparse
 
 
 def timeit(func):
@@ -39,10 +40,10 @@ class BoardSearcher:
         self.seed = None
         self.number_of_slides = n_slides
         self.frame_counter = frame_counter
-        # number of frames witch have to pass to run again check if
+        # number of frames which have to pass to run again check if
         # current frame is similar to the last saved slide
         self.save_interval = save_interval
-        # ratio of similarity between images based on witch we decide if we
+        # ratio of similarity between images based on which we decide if we
         # are going to save an image
         self.similarity = similarity
         self.load_config()
@@ -105,14 +106,13 @@ class BoardSearcher:
 
         return our_cnt
 
-    def seed_filter(self, image, seed):
+    def seed_sufficient(self, image):
         """
         My ghetto green filter that only checks if we really hit the board.
         So it checks if the green value of seed pixel is the highest
 
         Args:
-            image(numpy.ndarra): Image from witch we get seed values
-            seed(tuple): Seed point
+            image(numpy.ndarra): Image from which we get seed values
 
         Returns:
             bool: True if found the board. False otherwise
@@ -134,14 +134,14 @@ class BoardSearcher:
         Returns:
             Coordinates of seed position
         """
-        if self.seed is not None and self.seed_filter(image, self.seed):
+        if self.seed is not None and self.seed_sufficient(image):
             return self.seed
 
         h, w = image.shape[:2]
         # three retries to find proper seed
         for i in xrange(1, 3):
             self.seed = (randint(w/4, (w/4)*3), randint(h/4, (h/4)*3))
-            if self.seed_filter(image, self.seed):
+            if self.seed_sufficient(image):
                 break
 
         return self.seed
@@ -208,7 +208,7 @@ class BoardSearcher:
             self.last_saved_slide_mask = cv.imread("mask.png",
                                                    cv.CV_LOAD_IMAGE_GRAYSCALE)
 
-        if self.last_saved_slide_mask is None:
+        if self.last_saved_slide_mask is None or self.last_saved_slide is None:
             return True
 
         if mask.shape != self.last_saved_slide_mask.shape:
@@ -234,7 +234,7 @@ class BoardSearcher:
 
     def get_sorted_rectangle(self, cnt):
         """
-        Tries to determine witch corner is witch based on
+        Tries to determine which corner is which based on
         given conture and then sorts them in correct order so
         we can use it latter to shift perspective of image
 
@@ -342,12 +342,12 @@ class BoardSearcher:
 
         img = origin.copy()
         cv.drawContours(img, [our_cnt], -1, (0, 255, 0), 3)
-        if(self.frame_counter % self.save_interval == 0):
+        if(self.frame_counter == 0):
             self.write_image(our_cnt, img, mask)
 
         self.frame_counter = (self.frame_counter + 1) % self.save_interval
         if debug:
-            cv.imshow("img", img)
+            cv.imshow("final image", img)
 
     def preprocesing(self, image, debug=True):
         """
@@ -438,23 +438,75 @@ class BoardSearcher:
                 break
         vid.release()
 
+    def start_processing(self, input_file):
+        """
+        Main function to determine if input file is a video or image
+        and start processing the file accordingly
+
+        Args:
+            input_file(string): Path to input file
+        """
+        try:
+            if (input_file.endswith(video_extension_list)):
+                self.video_search(input_file)
+            elif (imghdr.what is not None):
+                self.image_search(input_file)
+            else:
+                print("Unrecognized file format", file=sys.stderr)
+            cv.destroyAllWindows()
+        except IOError:
+            print("Wrong file or path to file", file=sys.stderr)
+
 
 video_extension_list = ("mkv", "wmv", "avi", "mp4")
 
 
-def main(input_file):
-    board = BoardSearcher(n_slides=0, frame_counter=0,
-                          save_interval=30, similarity=0.70)
-    try:
-        if (input_file.endswith(video_extension_list)):
-            board.video_search(input_file)
-        elif (imghdr.what is not None):
-            board.image_search(input_file)
-        else:
-            print("Unrecognized file format", file=sys.stderr)
-        cv.destroyAllWindows()
-    except IOError:
-        print("Wrong file or path to file", file=sys.stderr)
+def main(input_file, slide_number=0, start_frame=0, check_interval=30,
+         sim=0.70):
+    board = BoardSearcher(n_slides=slide_number, frame_counter=start_frame,
+                          save_interval=check_interval, similarity=sim)
+    for file_name in input_file:
+        board.start_processing(file_name)
 
 if __name__ == '__main__':
-    main(sys.argv[1])
+    desc = '''
+            board2slides - Extracts notes as slides from educational
+            (whiteboard/blackboard) videos.
+            '''
+    parser = argparse.ArgumentParser(description=desc)
+    parser.add_argument('filename', nargs='+', metavar='filename',
+                        help='List of vidos or images to process.')
+
+    parser.add_argument('-n' '--slide-number', nargs='?', default=0,
+                        type=int, metavar='N', dest='slide_number',
+                        help='''
+                             On which slide number to start. Slide with this
+                             number will also be loaded. (default: 0)
+                             ''')
+
+    parser.add_argument('-i' '--save-interval', nargs='?', default=30,
+                        type=int, metavar='I', dest='save_interval',
+                        help='''
+                             How many frames have to pass to perform check if
+                             board changed and possibly save slide from video.
+                             (default: 30)
+                             ''')
+
+    parser.add_argument('-s' '--similarity', nargs='?', default=0.70,
+                        type=float, metavar='S', dest='similarity',
+                        help='''
+                             On have many percent frames have to be similar to
+                             skip saving of slide. (default: 0.70)
+                             ''')
+
+    parser.add_argument('-f' '--start-frame', nargs='?', default=0,
+                        type=int, metavar='F', dest='start_frame',
+                        help='''
+                             On which frame to start processing the video.
+                             (default: 0)
+                             ''')
+
+    args = parser.parse_args()
+    main(args.filename, slide_number=args.slide_number,
+         start_frame=args.start_frame, check_interval=args.save_interval,
+         sim=args.similarity)
