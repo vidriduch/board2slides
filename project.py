@@ -29,11 +29,18 @@ class BoardSearcher:
 
     last_saved_slide = None
     last_saved_slide_mask = None
+    last_saved_hash = None
+    last_hash = None
+    hash_function = None
+    debug = True
 
     def __init__(self, n_slides=0,
                  frame_counter=0,
                  save_interval=30,
-                 similarity=0.70):
+                 similarity=0.60,
+                 compare_function='dhash',
+                 debug=True):
+        self.debug = debug
         self.width = None
         self.height = None
         self.saved_cnt = None
@@ -46,7 +53,18 @@ class BoardSearcher:
         # ratio of similarity between images based on which we decide if we
         # are going to save an image
         self.similarity = similarity
+        self.__func_keyword_to_function__(compare_function)
         self.load_config()
+
+    def __func_keyword_to_function__(self, keyword):
+        switcher = {
+            'dhash': '__compute_dhash__',
+            'phash': '__compute_phash__',
+            'ahash': '__compute_ahash__',
+            'orb': None
+        }
+        compare_function = switcher.get(keyword, '__compute_dhash__')
+        self.hash_function = getattr(self, compare_function)
 
     def load_config(self):
         """
@@ -82,7 +100,7 @@ class BoardSearcher:
             image(numpy.ndarray): Image to find contures from
 
         Returns:
-            Found conture on given image
+            Found conture in given image
         """
         im = image.copy()
         (cnts, _) = cv.findContours(im,
@@ -164,8 +182,9 @@ class BoardSearcher:
         mask = np.zeros((h+2, w+2), np.uint8)
         connectivity = 4
         mask[:] = 0
-        self.lo = cv.getTrackbarPos('lo', 'result')
-        self.hi = cv.getTrackbarPos('hi', 'result')
+        if self.debug is True:
+            self.lo = cv.getTrackbarPos('lo', 'result')
+            self.hi = cv.getTrackbarPos('hi', 'result')
         flags = connectivity
         flags |= cv.FLOODFILL_MASK_ONLY
         flags |= 255 << 8
@@ -185,14 +204,118 @@ class BoardSearcher:
         cv.createTrackbar('lo', 'result', self.lo, 255, self.trackbar_callback)
         cv.createTrackbar('hi', 'result', self.hi, 255, self.trackbar_callback)
 
+    def __hamming_distance__(self, hash1, hash2):
+        hash1_len = len(hash1) * len(hash1[0])
+        hash2_len = len(hash2) * len(hash2[0])
+
+        if(hash1_len != hash2_len):
+            return 0
+        distance = 0
+        i = 0
+        for row in hash1:
+            distance += sum(map(lambda x: 0 if x[0] == x[1] else 1,
+                                zip(row, hash2[i])))
+            i = i + 1
+        return distance
+
+    def __check_change_orb__(self, image):
+        """
+        Computes ORB fetures on last saved slide and given image.
+        Tries to match features of these images and calculates ratio
+        of matched features with all found features in last saved slide
+
+        Args:
+            image(numpy.ndarray): Image from which to get features
+
+        Returns:
+            float: Similararity between last saved image and given image
+        """
+        orb = cv.ORB()
+        kp1, ds1 = orb.detectAndCompute(self.last_saved_slide, None)
+        kp2, ds2 = orb.detectAndCompute(image, None)
+        bf = cv.BFMatcher(cv.NORM_HAMMING, crossCheck=True)
+        matches = bf.match(ds1, ds2)
+        return float(len(matches))/len(kp1)
+
+    def __compute_ahash__(self, image):
+        """
+        Computes aHash. Implemantation based on
+        http://www.hackerfactor.com/blog/index.php?/archives/432-Looks-Like-It.html
+
+        Args:
+            image(numpy.ndarray): Image from which to compute the hash
+
+        Returns:
+            numpy.ndarray: 2D binary array with computed aHash
+        """
+        gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+        resized = cv.resize(gray, (8, 8), interpolation=cv.INTER_AREA)
+        mean = cv.mean(resized)[0]
+        return resized > mean
+
+    def __compute_phash__(self, image):
+        """
+        Computes pHash based on discrete cosine transformation.
+        Implemantation based on
+        http://www.hackerfactor.com/blog/index.php?/archives/432-Looks-Like-It.html
+
+        Args:
+            image(numpy.ndarray): Image from which to compute the hash
+
+        Returns:
+            numpy.ndarray: 2D binary array with computed pHash
+        """
+        gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+        resized = cv.resize(gray, (32, 32), interpolation=cv.INTER_AREA)
+        dct = cv.dct(np.float32(resized))
+        dct = np.uint8(dct)
+        dct_low_freq = dct[:8, :8]
+        med = np.median(dct_low_freq)
+        return dct_low_freq > med
+
+    def __compute_dhash__(self, image):
+        """
+        Computes dHash. Implemantation based on
+        http://www.hackerfactor.com/blog/index.php?/archives/529-Kind-of-Like-That.html
+
+        Args:
+            image(numpy.ndarray): Image from which to compute the hash
+
+        Returns:
+            numpy.ndarray: 2D binary array with computed dHash
+        """
+        gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+        resized = cv.resize(gray, (9, 8), interpolation=cv.INTER_AREA)
+        return resized[:, 1:] > resized[:, :-1]
+
+    def __compare_hashes__(self, image):
+        """
+        Generate hashes of last saved slide and given image and
+        computes hamming distance between hashes
+
+        Args:
+            image(numpy.ndarray): Image from which to compute the hash and
+                                  compare to last saved slide hash
+
+        Returns:
+            float: Ratio between hamming distance of hashes and length of
+                   the hash
+        """
+        if self.last_saved_hash is None:
+            self.last_hash = self.hash_function(self.last_saved_slide)
+        self.last_hash = self.hash_function(image)
+        hamming = self.__hamming_distance__(self.last_hash, self.last_hash)
+        hash_len = len(self.last_hash) * len(self.last_hash[0])
+        return float((hash_len - hamming))/hash_len
+
     def check_change(self, image, mask):
         """
         Loads last slide and last image mask and perfroms bitwise &
         between masks of current and last image and then applies
-        this new mask to old image and current image and tries to
-        find keypoints and match them between images. If we match
-        more than set similarity then the pictures are almost the same and
-        we don't have to save else we save new slide.
+        this new mask to old and current image. Then calls similarity check
+        function.If returned value is more than set similarity then the
+        pictures are almost the same and we don't have to save else we
+        save new slide.
 
         Args:
             image(numpy.ndarray): Image to check
@@ -220,13 +343,11 @@ class BoardSearcher:
                                                mask=prepared_mask)
         check_image = cv.bitwise_and(image, image, mask=prepared_mask)
 
-        orb = cv.ORB()
-        kp1, ds1 = orb.detectAndCompute(self.last_saved_slide, None)
-        kp2, ds2 = orb.detectAndCompute(check_image, None)
-        bf = cv.BFMatcher(cv.NORM_HAMMING, crossCheck=True)
-        matches = bf.match(ds1, ds2)
+        if self.hash_function is None:
+            val = self.__check_change_orb__(check_image)
+        else:
+            val = self.__compare_hashes__(check_image)
 
-        val = float(len(matches))/len(kp1)
         if(val > self.similarity):
             return False
 
@@ -314,9 +435,10 @@ class BoardSearcher:
             cv.imwrite("mask.png", warp_mask)
             self.last_saved_slide = warp
             self.last_saved_slide_mask = warp_mask
+            self.last_saved_hash = self.last_hash
             self.number_of_slides += 1
 
-    def find_and_draw_edges(self, image, origin, debug=True):
+    def find_and_draw_edges(self, image, origin):
         """
         Transforms color space of original image to HSV.
         Creates a window with trackbars to adjust hsv values
@@ -330,7 +452,7 @@ class BoardSearcher:
             origin(numpy.ndarray): Original loaded image
         """
         mask = self.get_mask(image)
-        if debug:
+        if self.debug:
             cv.imshow('mask', mask)
         our_cnt = self.find_board(mask)
 
@@ -346,10 +468,10 @@ class BoardSearcher:
             self.write_image(our_cnt, img, mask)
 
         self.frame_counter = (self.frame_counter + 1) % self.save_interval
-        if debug:
+        if self.debug:
             cv.imshow("final image", img)
 
-    def preprocesing(self, image, debug=True):
+    def preprocesing(self, image):
         """
         Makes a copy of input image then makes a threasholding operation
         so we can get mask of green areas. Then applies
@@ -357,7 +479,6 @@ class BoardSearcher:
 
         Args:
             image(numpy.ndarray): Image to process
-            debug(bool): If true display debuging window
 
         Returns:
             Image with boosted green channel
@@ -368,7 +489,7 @@ class BoardSearcher:
         im[:, :, 1] = cv.bitwise_and(image[:, :, 1], g_boost)
         im[:, :, 2] = cv.bitwise_and(image[:, :, 2], g_boost)
 
-        if debug:
+        if self.debug:
             cv.imshow("preprocesing", im)
         return im
 
@@ -416,7 +537,8 @@ class BoardSearcher:
         if(im is None):
             print("Can not open file.", file=sys.stderr)
             return
-        self.create_trackbars()
+        if self.debug is True:
+            self.create_trackbars()
         while(True):
             self.get_board(im)
             if cv.waitKey(1) & 0xFF == 27:
@@ -430,7 +552,8 @@ class BoardSearcher:
             video(string): Path to video file to process
         """
         vid = cv.VideoCapture(video)
-        self.create_trackbars()
+        if self.debug is True:
+            self.create_trackbars()
         while(vid.isOpened()):
             ret, frame = vid.read()
             self.get_board(frame)
@@ -462,9 +585,10 @@ video_extension_list = ("mkv", "wmv", "avi", "mp4")
 
 
 def main(input_file, slide_number=0, start_frame=0, check_interval=30,
-         sim=0.70):
+         sim=0.60, compare_func='dhash', dbg=True):
     board = BoardSearcher(n_slides=slide_number, frame_counter=start_frame,
-                          save_interval=check_interval, similarity=sim)
+                          save_interval=check_interval, similarity=sim,
+                          compare_function=compare_func, debug=dbg)
     for file_name in input_file:
         board.start_processing(file_name)
 
@@ -474,17 +598,18 @@ if __name__ == '__main__':
             (whiteboard/blackboard) videos.
             '''
     parser = argparse.ArgumentParser(description=desc)
+
     parser.add_argument('filename', nargs='+', metavar='filename',
                         help='List of vidos or images to process.')
 
-    parser.add_argument('-n' '--slide-number', nargs='?', default=0,
+    parser.add_argument('-n', '--slide-number', default=0,
                         type=int, metavar='N', dest='slide_number',
                         help='''
                              On which slide number to start. Slide with this
                              number will also be loaded. (default: 0)
                              ''')
 
-    parser.add_argument('-i' '--save-interval', nargs='?', default=30,
+    parser.add_argument('-i', '--save-interval', default=30,
                         type=int, metavar='I', dest='save_interval',
                         help='''
                              How many frames have to pass to perform check if
@@ -492,21 +617,36 @@ if __name__ == '__main__':
                              (default: 30)
                              ''')
 
-    parser.add_argument('-s' '--similarity', nargs='?', default=0.70,
+    parser.add_argument('-s', '--similarity', default=0.60,
                         type=float, metavar='S', dest='similarity',
                         help='''
                              On have many percent frames have to be similar to
-                             skip saving of slide. (default: 0.70)
+                             skip saving of slide. (default: 0.60)
                              ''')
 
-    parser.add_argument('-f' '--start-frame', nargs='?', default=0,
+    parser.add_argument('-f', '--start-frame', default=0,
                         type=int, metavar='F', dest='start_frame',
                         help='''
                              On which frame to start processing the video.
                              (default: 0)
                              ''')
 
+    parser.add_argument('-c', '--compare-function', default='dhash',
+                        dest='cfunc',
+                        choices=['dhash', 'phash', 'ahash', 'orb'],
+                        help='''
+                             Specify a compare function which is going to
+                             be used to perform similarity chceck between
+                             last saved slide and currently proccesed one.
+                             (default: dhash)
+                             ''')
+
+    parser.add_argument('-d', '--debug', action='store_false', dest='debug',
+                        help='''
+                             Turns off debuging features. (default: turned ON)
+                             ''')
+
     args = parser.parse_args()
     main(args.filename, slide_number=args.slide_number,
          start_frame=args.start_frame, check_interval=args.save_interval,
-         sim=args.similarity)
+         sim=args.similarity, compare_func=args.cfunc, dbg=args.debug)
