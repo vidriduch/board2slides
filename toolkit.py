@@ -9,6 +9,7 @@ import time
 import imghdr
 import csv
 import argparse
+import phash as ph
 
 
 def timeit(func):
@@ -53,6 +54,61 @@ class BoardToolkit:
         max = np.argmax(arr)
         min = np.argmin(arr)
         return (min, max)
+
+    def test_dct_hamming(self, image1, image2):
+        """
+        Function which computes hamming distance  between two
+        dct hashes of given images
+
+        Args:
+            image1(string): Path to first image
+            image2(string): Path to second image
+
+        Returns:
+            float: ratio between hamming distance and length of hash
+                   to fit similarity messure
+        """
+        hash1 = ph.dct_imagehash(image1)
+        hash2 = ph.dct_imagehash(image2)
+        return float(64 - ph.hamming_distance(hash1, hash2))/64
+
+    def test_radial_crosscorrelation(self, image1, image2):
+        """
+        Function which computes cross correlation between two
+        radial hashes of given images
+
+        Args:
+            image1(string): Path to first image
+            image2(string): Path to second image
+
+        Returns:
+            float: cross correlation between two radial hashes
+        """
+        digest1 = ph.image_digest(image1)
+        digest2 = ph.image_digest(image2)
+        return ph.cross_correlation(digest1, digest2)
+
+    def test_similarity(self, image1, image2, threshold=0.60, func='radial'):
+        """
+        Function to test if two given images are the some or not
+
+        Args:
+            image1(string): Path to first image
+            image2(string): Path to second image
+            threshold(float): Threshold value based on witch we decide
+                              if images are similar or not
+            func(string): Hashing function to use
+
+        Returns:
+            bool: True if images are similar. False otherwise
+        """
+        if(func == 'dct'):
+            func = self.test_dct_hamming
+        else:
+            func = self.test_radial_crosscorrelation
+
+        result = func(image1, image2)
+        return result > threshold
 
     def get_board_boundaries(self, image):
         """
@@ -184,21 +240,57 @@ class BoardToolkit:
             print("Wrong file or path to file", file=sys.stderr)
 
 
-def main(input_file, output_file=None):
+def main(input_file, output_file=None, test_file=None, treshold=0.60,
+         hash_function='radial'):
     toolkit = BoardToolkit()
-    for file_name in input_file:
-        toolkit.write_metadata(file_name, output_file)
+    if test_file is not None:
+        similarity = toolkit.test_similarity(input_file[0], test_file,
+                                             treshold, hash_function)
+        if output_file is None:
+            print(similarity)
+        else:
+            print(similarity, file=open(output_file, 'wb+'))
+    else:
+        for file_name in input_file:
+            toolkit.write_metadata(file_name, output_file)
 
 if __name__ == '__main__':
     desc = "Command line toolkit for creating board2slides dataset"
     parser = argparse.ArgumentParser(description=desc)
     parser.add_argument('filename', metavar='filename', nargs='+',
                         help='list of videos or images to process')
-    parser.add_argument('-o', '--output-file', nargs='?',
+    parser.add_argument('-o', '--output-file', metavar='FILE',
                         help='''
                              specify outputfile where metadata will be save
                              (default: basename from input file with _meta
                              sufix)
                              ''')
+    parser.add_argument('-s', '--test-similarity', metavar='FILE',
+                        dest='sim_file',
+                        help='''
+                             If similarity test is to be performed and
+                             file against which is main file going to be
+                             tested. Return value (True or False) will
+                             be returned to stdout if -o option is not
+                             specified
+                             ''')
+    parser.add_argument('-t', '--treshold', metavar='N', default=0.60,
+                        type=float,
+                        help='''
+                             This argument only makes sense with -s option
+                             it specifies a threshold based on which test
+                             function decided if two pictures are similar.
+                             (default: 0.60)
+                             ''')
+    parser.add_argument('-a', '--hash-function', dest='func',
+                        choices=['dct', 'radial'],
+                        default='radial',
+                        help='''
+                             This argument only makes sense with -s option
+                             it specifies a hash function which is going to be
+                             used to perform hashing in similarity test.
+                             (default: radial)
+                             ''')
     args = parser.parse_args()
-    main(args.filename, args.output_file)
+    main(args.filename, args.output_file, args.sim_file, args.treshold,
+         args.func)

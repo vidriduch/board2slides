@@ -32,15 +32,16 @@ class BoardSearcher:
     last_saved_hash = None
     last_hash = None
     hash_function = None
+    output = None
+    input_file = None
     debug = True
 
-    def __init__(self, n_slides=0,
-                 frame_counter=0,
-                 save_interval=30,
-                 similarity=0.60,
-                 compare_function='dhash',
-                 debug=True):
+    def __init__(self, n_slides=0, frame_counter=0, save_interval=30,
+                 similarity=0.60, compare_function='dhash', output='slide',
+                 in_file='slide', debug=True):
         self.debug = debug
+        self.output = output
+        self.input_file = in_file
         self.width = None
         self.height = None
         self.saved_cnt = None
@@ -325,7 +326,8 @@ class BoardSearcher:
             bool: True if images are the same. False otherwise
         """
         if self.last_saved_slide is None or self.last_saved_slide_mask is None:
-            last_slide_name = "slide{}.png".format(self.number_of_slides)
+            last_slide_name = "{}{}.png".format(self.input_file,
+                                                self.number_of_slides)
             self.last_saved_slide = cv.imread(last_slide_name,
                                               cv.CV_LOAD_IMAGE_COLOR)
             self.last_saved_slide_mask = cv.imread("mask.png",
@@ -431,7 +433,8 @@ class BoardSearcher:
         warp, warp_mask = self.get_cropped_image(rect, image, mask)
 
         if(self.check_change(warp, warp_mask)):
-            cv.imwrite("slide{0}.png".format(self.number_of_slides), warp)
+            cv.imwrite("{}{}.png".format(self.output,
+                                         self.number_of_slides), warp)
             cv.imwrite("mask.png", warp_mask)
             self.last_saved_slide = warp
             self.last_saved_slide_mask = warp_mask
@@ -452,7 +455,7 @@ class BoardSearcher:
             origin(numpy.ndarray): Original loaded image
         """
         mask = self.get_mask(image)
-        if self.debug:
+        if self.debug is True:
             cv.imshow('mask', mask)
         our_cnt = self.find_board(mask)
 
@@ -468,7 +471,7 @@ class BoardSearcher:
             self.write_image(our_cnt, img, mask)
 
         self.frame_counter = (self.frame_counter + 1) % self.save_interval
-        if self.debug:
+        if self.debug is True:
             cv.imshow("final image", img)
 
     def preprocesing(self, image):
@@ -489,7 +492,7 @@ class BoardSearcher:
         im[:, :, 1] = cv.bitwise_and(image[:, :, 1], g_boost)
         im[:, :, 2] = cv.bitwise_and(image[:, :, 2], g_boost)
 
-        if self.debug:
+        if self.debug is True:
             cv.imshow("preprocesing", im)
         return im
 
@@ -539,10 +542,13 @@ class BoardSearcher:
             return
         if self.debug is True:
             self.create_trackbars()
-        while(True):
+        if self.debug is True:
+            while(True):
+                self.get_board(im)
+                if cv.waitKey(1) & 0xFF == 27:
+                    break
+        else:
             self.get_board(im)
-            if cv.waitKey(1) & 0xFF == 27:
-                break
 
     def video_search(self, video):
         """
@@ -557,8 +563,9 @@ class BoardSearcher:
         while(vid.isOpened()):
             ret, frame = vid.read()
             self.get_board(frame)
-            if cv.waitKey(1) & 0xFF == 27:
-                break
+            if self.debug is True:
+                if cv.waitKey(1) & 0xFF == 27:
+                    break
         vid.release()
 
     def start_processing(self, input_file):
@@ -585,10 +592,12 @@ video_extension_list = ("mkv", "wmv", "avi", "mp4")
 
 
 def main(input_file, slide_number=0, start_frame=0, check_interval=30,
-         sim=0.60, compare_func='dhash', dbg=True):
+         sim=0.60, compare_func='dhash', output_file='slide', in_file='slide',
+         dbg=True):
     board = BoardSearcher(n_slides=slide_number, frame_counter=start_frame,
                           save_interval=check_interval, similarity=sim,
-                          compare_function=compare_func, debug=dbg)
+                          compare_function=compare_func, output=output_file,
+                          in_file=in_file, debug=dbg)
     for file_name in input_file:
         board.start_processing(file_name)
 
@@ -641,6 +650,25 @@ if __name__ == '__main__':
                              (default: dhash)
                              ''')
 
+    parser.add_argument('-o', '--output-file', default='slide',
+                        dest='out_file',
+                        help='''
+                             Specify a outfile name pattern. If specified
+                             generated slides are going have name
+                             {file_name}{number_of_slide}.png.
+                             (default: slide{number_of_slide}.png)
+                             ''')
+
+    parser.add_argument('-l', '--input-slide', default='slide',
+                        dest='in_file',
+                        help='''
+                             Specify a input file name pattern. If specified
+                             first image to compare will be loaded with
+                             {file_name}{#n}.png where #n is number specified
+                             in -n option.
+                             (default: slide{#n}.png)
+                             ''')
+
     parser.add_argument('-d', '--debug', action='store_false', dest='debug',
                         help='''
                              Turns off debuging features. (default: turned ON)
@@ -649,4 +677,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     main(args.filename, slide_number=args.slide_number,
          start_frame=args.start_frame, check_interval=args.save_interval,
-         sim=args.similarity, compare_func=args.cfunc, dbg=args.debug)
+         sim=args.similarity, compare_func=args.cfunc,
+         output_file=args.out_file, in_file=args.in_file, dbg=args.debug)

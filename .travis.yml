@@ -5,3 +5,7 @@ install:
   - pip install flake8 --use-mirrors
 script:
   - flake8 --ignore=E731,E226 .
+  - bash tests/test_board_borders.sh assets/board.jpg
+  - bash tests/test_board_borders.sh assets/board1.jpg
+  - bash tests/test_gen_pic_similarity.sh assets/board.jpg assets/crop_board.png
+  - bash tests/test_gen_pic_similarity.sh assets/board1.jpg assets/crop_board1.png
