@@ -205,18 +205,9 @@ class BoardSearcher:
         cv.createTrackbar('hi', 'result', self.hi, 255, self.trackbar_callback)
 
     def __hamming_distance__(self, hash1, hash2):
-        hash1_len = len(hash1) * len(hash1[0])
-        hash2_len = len(hash2) * len(hash2[0])
-
-        if(hash1_len != hash2_len):
+        if(len(hash1) != len(hash2)):
             return 0
-        distance = 0
-        i = 0
-        for row in hash1:
-            distance += sum(map(lambda x: 0 if x[0] == x[1] else 1,
-                                zip(row, hash2[i])))
-            i = i + 1
-        return distance
+        return sum(map(lambda x: 0 if x[0] == x[1] else 1, zip(hash1, hash2)))
 
     def __check_change_orb__(self, image):
         """
@@ -251,7 +242,8 @@ class BoardSearcher:
         gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
         resized = cv.resize(gray, (8, 8), interpolation=cv.INTER_AREA)
         mean = cv.mean(resized)[0]
-        return resized > mean
+        ret = resized > mean
+        return ret.flatten()
 
     def __compute_phash__(self, image):
         """
@@ -271,7 +263,8 @@ class BoardSearcher:
         dct = np.uint8(dct)
         dct_low_freq = dct[:8, :8]
         med = np.median(dct_low_freq)
-        return dct_low_freq > med
+        ret = dct_low_freq > med
+        return ret.flatten()
 
     def __compute_dhash__(self, image):
         """
@@ -286,7 +279,8 @@ class BoardSearcher:
         """
         gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
         resized = cv.resize(gray, (9, 8), interpolation=cv.INTER_AREA)
-        return resized[:, 1:] > resized[:, :-1]
+        ret = resized[:, 1:] > resized[:, :-1]
+        return ret.flatten()
 
     def __compare_hashes__(self, image):
         """
@@ -305,7 +299,7 @@ class BoardSearcher:
             self.last_hash = self.hash_function(self.last_saved_slide)
         self.last_hash = self.hash_function(image)
         hamming = self.__hamming_distance__(self.last_hash, self.last_hash)
-        hash_len = len(self.last_hash) * len(self.last_hash[0])
+        hash_len = len(self.last_hash)
         return float((hash_len - hamming))/hash_len
 
     def check_change(self, image, mask):
