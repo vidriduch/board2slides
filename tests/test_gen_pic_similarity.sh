@@ -19,5 +19,4 @@ rm mask.png &> /dev/null
 rm test1_0.png &> /dev/null
 rm test1_0_meta.csv &> /dev/null
 
-echo $RET
 exit $RET
