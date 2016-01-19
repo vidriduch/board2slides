@@ -20,6 +20,13 @@ before_script:
   - make -j8
   - sudo make -j8 install
   - cd ../..
+  - mkdir -p native/linux/x86_64
+  - cp opencv/build/lib/libopencv_java248.so native/linux/x86_64/libopencv_java248.so
+  - cp opencv/build/bin/opencv-248.jar .
+  - jar -cMf opencv-native-248.jar native
+  - lein2 localrepo install opencv-248.jar opencv/opencv 2.4.8
+  - lein2 localrepo install opencv-native-248.jar opencv/opencv-native 2.4.8
+
 
 script:
   - flake8 --ignore=E731,E226 .
