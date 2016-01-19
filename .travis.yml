@@ -2,7 +2,9 @@ language: python
 python:
   - "2.7"
 install:
+  - sudo apt-get install python-dev python-numpy python-opencv
   - pip install flake8 --use-mirrors
+  - pip install phash --use-mirrors
 script:
   - flake8 --ignore=E731,E226 .
   - bash tests/test_board_borders.sh assets/board.jpg
