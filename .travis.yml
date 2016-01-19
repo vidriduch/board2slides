@@ -6,9 +6,20 @@ before_install:
   - sudo apt-get update
 
 install:
-  - sudo apt-get install python-dev python-opencv
+  - sudo apt-get install python-dev
   - pip install flake8 --use-mirrors
   - pip install phash --use-mirrors
+
+before_script:
+  - git clone https://github.com/Itseez/opencv.git
+  - cd opencv
+  - git checkout 2.4
+  - mkdir build
+  - cd build
+  - cmake ..
+  - make -j8
+  - sudo make -j8 install
+  - cd ../..
 
 script:
   - flake8 --ignore=E731,E226 .
