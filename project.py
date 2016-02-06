@@ -31,14 +31,24 @@ class BoardSearcher:
     last_saved_slide_mask = None
     last_saved_hash = None
     last_hash = None
+    similarity = 0.60
     hash_function = None
     debug = True
+
+    grid_size = (8, 8)
+    stored_section = None
+    last_saved_section = None
+    section_threshold = 4
+    reject_threshold = 2
 
     def __init__(self, n_slides=0,
                  frame_counter=0,
                  save_interval=30,
                  similarity=0.60,
                  compare_function='dhash',
+                 section_thresh=4,
+                 section_rjct=2,
+                 grid_size=(8, 8),
                  debug=True):
         self.debug = debug
         self.width = None
@@ -55,6 +65,15 @@ class BoardSearcher:
         self.similarity = similarity
         self.__func_keyword_to_function__(compare_function)
         self.load_config()
+        self.section_threshold = section_thresh
+        self.reject_threshold = section_rjct
+        self.grid_size = grid_size
+        self.stored_section = [[[None for x in range(2)]
+                               for x in range(grid_size[0])]
+                               for x in range(grid_size[1])]
+        self.last_saved_section = [[[None for x in range(2)]
+                                   for x in range(grid_size[0])]
+                                   for x in range(grid_size[1])]
 
     def __func_keyword_to_function__(self, keyword):
         switcher = {
@@ -282,7 +301,7 @@ class BoardSearcher:
         ret = resized[:, 1:] > resized[:, :-1]
         return ret.flatten()
 
-    def __compare_hashes__(self, image):
+    def __compare_hashes__(self, image, compare_image=None):
         """
         Generate hashes of last saved slide and given image and
         computes hamming distance between hashes
@@ -292,14 +311,22 @@ class BoardSearcher:
                                   compare to last saved slide hash
 
         Returns:
-            float: Ratio between hamming distance of hashes and length of
+            float: Ratio between hamming distance of hash and length of
                    the hash
         """
-        if self.last_saved_hash is None:
-            self.last_hash = self.hash_function(self.last_saved_slide)
-        self.last_hash = self.hash_function(image)
-        hamming = self.__hamming_distance__(self.last_hash, self.last_hash)
-        hash_len = len(self.last_hash)
+        if compare_image is None:
+            if self.last_saved_hash is None:
+                tmp_hash = self.hash_function(self.last_saved_slide)
+                self.last_saved_hash = tmp_hash
+            self.last_hash = self.hash_function(image)
+            new_hash = self.last_hash
+            old_hash = self.last_saved_hash
+        else:
+            new_hash = self.hash_function(image)
+            old_hash = self.hash_function(compare_image)
+
+        hamming = self.__hamming_distance__(new_hash, old_hash)
+        hash_len = len(new_hash)
         return float((hash_len - hamming))/hash_len
 
     def check_change(self, image, mask):
@@ -407,7 +434,7 @@ class BoardSearcher:
         warp_mask = cv.warpPerspective(mask, warp_mat, (max_width, max_height))
         return (warp, warp_mask)
 
-    def write_image(self, cnt, image, mask):
+    def write_image(self, cnt, board, mask):
         """
         Handles writing images to the disk. Tries to extract only board
         from image based on given contures then it performs basic check
@@ -421,16 +448,21 @@ class BoardSearcher:
         """
         if cnt is None:
             return
-        rect = self.get_sorted_rectangle(cnt)
-        warp, warp_mask = self.get_cropped_image(rect, image, mask)
 
-        if(self.check_change(warp, warp_mask)):
-            cv.imwrite("slide{0}.png".format(self.number_of_slides), warp)
-            cv.imwrite("mask.png", warp_mask)
-            self.last_saved_slide = warp
-            self.last_saved_slide_mask = warp_mask
+        self.stich_board(board)
+        if(self.check_change(board, mask)):
+            cv.imwrite("slide{0}.png".format(self.number_of_slides), board)
+            cv.imwrite("mask.png", mask)
+            self.last_saved_slide = board
+            self.last_saved_slide_mask = mask
             self.last_saved_hash = self.last_hash
+            self.last_saved_section = self.stored_section
             self.number_of_slides += 1
+
+        for x in range(0, self.grid_size[0]):
+            for y in range(0, self.grid_size[1]):
+                self.stored_section[x][y][0] = None
+                self.stored_section[x][y][1] = None
 
     def find_and_draw_edges(self, image, origin):
         """
@@ -457,9 +489,14 @@ class BoardSearcher:
             self.saved_cnt = our_cnt
 
         img = origin.copy()
-        cv.drawContours(img, [our_cnt], -1, (0, 255, 0), 3)
+        cv.drawContours(img, [our_cnt], -1, (0, 0, 255), 3)
+        if our_cnt is None:
+            return
+        rect = self.get_sorted_rectangle(our_cnt)
+        warp, warp_mask = self.get_cropped_image(rect, img, mask)
+        self.split_board(warp, warp_mask)
         if(self.frame_counter == 0):
-            self.write_image(our_cnt, img, mask)
+            self.write_image(our_cnt, warp, warp_mask)
 
         self.frame_counter = (self.frame_counter + 1) % self.save_interval
         if self.debug:
@@ -486,6 +523,141 @@ class BoardSearcher:
         if self.debug:
             cv.imshow("preprocesing", im)
         return im
+
+    def __get_occlusion_mask__(self, mask):
+        """
+        Tries to make a mask of occluding objects that are bigger that 1/3td
+        of given mask
+
+        Args:
+            mask(numpy.ndarray): Mask of entire board
+
+        Returns:
+            (numpy.ndarray): Mask of occluding objects
+        """
+        height, width = mask.shape[:2]
+        size = height/3 * width/3
+        kernel = np.ones((5, 5), np.uint8)
+        tmp = cv.dilate(mask, kernel, iterations=4)
+        inter = cv.bitwise_not(tmp)
+        im = inter.copy()
+        (cnts, _) = cv.findContours(im,
+                                    cv.RETR_TREE,
+                                    cv.CHAIN_APPROX_SIMPLE)
+        for c in cnts:
+            if cv.contourArea(c) < size:
+                cv.drawContours(inter, [c], 0, 1, -1)
+        return inter
+
+    def split_board(self, board, mask):
+        """
+        Function splits the board into sections that are then
+        individually processed. It runs through every section and
+        checks if it touches any occluding object if it does "seen"
+        counter is not incresed. If it doesn't sections is stored in
+        a list and "seen" counter is incresed
+
+        Args:
+            board(numpy.ndarray): Image of crop and rotated board
+            mask(numpy.ndarray): Mask of crop and rotated board
+
+        Return:
+            (numpy.ndarray): Final image of board without occluding objects
+        """
+        height, width = board.shape[:2]
+        section_size = (width/self.grid_size[0], height/self.grid_size[1])
+        occlusion_mask = self.__get_occlusion_mask__(mask)
+
+        if self.debug:
+            debug_image = board.copy()
+        for x in range(0, self.grid_size[0]):
+            for y in range(0, self.grid_size[1]):
+                tmpimg = board[y*section_size[1]:(y+1)*section_size[1],
+                               x*section_size[0]:(x+1)*section_size[0]]
+                tmp = np.zeros(board.shape[:2], dtype="uint8")
+                cv.rectangle(tmp, (x*section_size[0], y*section_size[1]),
+                                  ((x+1)*section_size[0],
+                                   (y+1)*section_size[1]),
+                             1, -1)
+                intersection = cv.bitwise_and(occlusion_mask, tmp)
+                count = cv.countNonZero(intersection)
+                if self.stored_section[x][y][0] is None:
+                    self.stored_section[x][y][0] = tmpimg
+                    self.stored_section[x][y][1] = 0
+                if count <= 100:
+                    self.stored_section[x][y][1] += 1
+                    if self.debug:
+                        color = (0, 255, 0)
+                else:
+                    if self.debug:
+                        color = (0, 0, 255)
+
+                if self.debug:
+                    cv.rectangle(debug_image, (x*section_size[0],
+                                               y*section_size[1]),
+                                              ((x+1)*section_size[0],
+                                               (y+1)*section_size[1]),
+                                 color, 1)
+        if self.debug:
+            cv.imshow("board", debug_image)
+
+    def stich_board(self, board):
+        """
+        Function takes sections of a board and based on given thresholding
+        values tries to stich them into one final image. If we seen
+        section more than given section thresholding value we sow this
+        section into final slide. If section is lower than section reject
+        threshold we sow last good section into final image. If value is
+        between these two thresholds we check how similar is this section
+        to last good save one if they are similar last good one is sow if they
+        are not we got some new information and new section is put into final
+        slide
+
+        Args:
+            board(numpy.ndarray): image of a board
+
+        Returns:
+            (numpy.ndarray): Final image of a board from stiched sections
+        """
+        height, width = board.shape[:2]
+        section_size = (width/self.grid_size[0], height/self.grid_size[1])
+        blank = np.zeros((height, width, 3), dtype="uint8")
+        for x in range(0, self.grid_size[0]):
+            for y in range(0, self.grid_size[1]):
+                seen = self.stored_section[x][y][1]
+                section = self.stored_section[x][y][0]
+                if self.last_saved_section[x][y][0] is not None:
+                    last_good_section = self.last_saved_section[x][y][0]
+                else:
+                    blank[y*section_size[1]:(y+1)*section_size[1],
+                          x*section_size[0]:(x+1)*section_size[0]] = section
+                    self.last_saved_section[x][y][0] = section
+                    continue
+                if seen >= self.section_threshold:
+                    blank[y*section_size[1]:(y+1)*section_size[1],
+                          x*section_size[0]:(x+1)*section_size[0]] = section
+                elif (seen < self.section_threshold and
+                      seen > self.reject_threshold):
+                    sim = self.__compare_hashes__(section, last_good_section)
+                    if sim > self.similarity:
+                        blank[y*section_size[1]:
+                              (y+1)*section_size[1],
+                              x*section_size[0]:
+                              (x+1)*section_size[0]] = last_good_section
+                    else:
+                        blank[y*section_size[1]:
+                              (y+1)*section_size[1],
+                              x*section_size[0]:
+                              (x+1)*section_size[0]] = section
+                else:
+                    blank[y*section_size[1]:
+                          (y+1)*section_size[1],
+                          x*section_size[0]:
+                          (x+1)*section_size[0]] = last_good_section
+
+        if self.debug:
+            cv.imshow("stiched image", blank)
+        return blank
 
     def get_board(self, image):
         """
@@ -579,10 +751,14 @@ video_extension_list = ("mkv", "wmv", "avi", "mp4")
 
 
 def main(input_file, slide_number=0, start_frame=0, check_interval=30,
-         sim=0.60, compare_func='dhash', dbg=True):
+         sim=0.60, compare_func='dhash', section_threshold=4,
+         section_reject=2, grid=(16, 16), dbg=True):
     board = BoardSearcher(n_slides=slide_number, frame_counter=start_frame,
                           save_interval=check_interval, similarity=sim,
-                          compare_function=compare_func, debug=dbg)
+                          compare_function=compare_func,
+                          section_thresh=section_threshold,
+                          section_rjct=section_reject, grid_size=grid,
+                          debug=dbg)
     for file_name in input_file:
         board.start_processing(file_name)
 
@@ -635,6 +811,36 @@ if __name__ == '__main__':
                              (default: dhash)
                              ''')
 
+    parser.add_argument('-t', '--section-threshold', default=8,
+                        type=float, metavar='T', dest='section_thresh',
+                        help='''
+                             Threshold value for how many times we have to
+                             see individual section of a board to definetely
+                             accept it. (default: 8)
+                             ''')
+
+    parser.add_argument('-r', '--section-reject', default=4,
+                        type=float, metavar='T', dest='section_reject',
+                        help='''
+                             Threshold value for how many times we have to
+                             see individual section of a board to definetely
+                             reject it. (default: 4)
+                             ''')
+
+    parser.add_argument('--grid-width', default=16,
+                        type=float, metavar='T', dest='grid_width',
+                        help='''
+                             How many sections we should split image of a board
+                             along x axis. (default: 16)
+                             ''')
+
+    parser.add_argument('--grid-height', default=16,
+                        type=float, metavar='T', dest='grid_height',
+                        help='''
+                             How many sections we should split image of a board
+                             along y axis. (default: 16)
+                             ''')
+
     parser.add_argument('-d', '--debug', action='store_false', dest='debug',
                         help='''
                              Turns off debuging features. (default: turned ON)
@@ -643,4 +849,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     main(args.filename, slide_number=args.slide_number,
          start_frame=args.start_frame, check_interval=args.save_interval,
-         sim=args.similarity, compare_func=args.cfunc, dbg=args.debug)
+         sim=args.similarity, compare_func=args.cfunc,
+         section_threshold=args.section_thresh,
+         section_reject=args.section_reject,
+         grid=(args.grid_width, args.grid_height), dbg=args.debug)
