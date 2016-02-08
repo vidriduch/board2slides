@@ -228,7 +228,7 @@ class BoardSearcher:
             return 0
         return sum(map(lambda x: 0 if x[0] == x[1] else 1, zip(hash1, hash2)))
 
-    def __check_change_orb__(self, image):
+    def __check_change_orb__(self, image, last_image):
         """
         Computes ORB fetures on last saved slide and given image.
         Tries to match features of these images and calculates ratio
@@ -236,12 +236,13 @@ class BoardSearcher:
 
         Args:
             image(numpy.ndarray): Image from which to get features
+            last_image(numpy.ndarray): Image which we want to compare
 
         Returns:
             float: Similararity between last saved image and given image
         """
         orb = cv.ORB()
-        kp1, ds1 = orb.detectAndCompute(self.last_saved_slide, None)
+        kp1, ds1 = orb.detectAndCompute(self.last_image, None)
         kp2, ds2 = orb.detectAndCompute(image, None)
         bf = cv.BFMatcher(cv.NORM_HAMMING, crossCheck=True)
         matches = bf.match(ds1, ds2)
@@ -359,16 +360,17 @@ class BoardSearcher:
             return False
 
         prepared_mask = cv.bitwise_and(self.last_saved_slide_mask, mask)
-        self.last_saved_slide = cv.bitwise_and(self.last_saved_slide,
-                                               self.last_saved_slide,
-                                               mask=prepared_mask)
+        last_saved_masked_slide = cv.bitwise_and(self.last_saved_slide,
+                                                 self.last_saved_slide,
+                                                 mask=prepared_mask)
         check_image = cv.bitwise_and(image, image, mask=prepared_mask)
 
         if self.hash_function is None:
-            val = self.__check_change_orb__(check_image)
+            val = self.__check_change_orb__(check_image,
+                                            last_saved_masked_slide)
         else:
-            val = self.__compare_hashes__(check_image)
-
+            val = self.__compare_hashes__(check_image,
+                                          last_saved_masked_slide)
         if(val > self.similarity):
             return False
 
@@ -448,8 +450,7 @@ class BoardSearcher:
         """
         if cnt is None:
             return
-
-        self.stich_board(board)
+        self.stitch_board(board)
         if(self.check_change(board, mask)):
             cv.imwrite("slide{0}.png".format(self.number_of_slides), board)
             cv.imwrite("mask.png", mask)
@@ -524,29 +525,43 @@ class BoardSearcher:
             cv.imshow("preprocesing", im)
         return im
 
-    def __get_occlusion_mask__(self, mask):
+    def __get_occlusion_mask__(self, board):
         """
-        Tries to make a mask of occluding objects that are bigger that 1/3td
-        of given mask
+        Function tries to extract mask of object in front of the table
+        by diff-ing last saved slide against current image and then thresholds
+        this to get mask of image. After this we dilate image to get rid of
+        small blobs.
 
         Args:
-            mask(numpy.ndarray): Mask of entire board
+            board(numpy.ndarray): Image of the croped board
 
         Returns:
-            (numpy.ndarray): Mask of occluding objects
+           (numpy.ndarray): Mask of objects in foreground
         """
-        height, width = mask.shape[:2]
+        if self.last_saved_slide is None:
+            return np.zeros(board.shape[:2], dtype="uint8")
+
+        height, width = board.shape[:2]
         size = height/3 * width/3
-        kernel = np.ones((5, 5), np.uint8)
-        tmp = cv.dilate(mask, kernel, iterations=4)
-        inter = cv.bitwise_not(tmp)
-        im = inter.copy()
-        (cnts, _) = cv.findContours(im,
+        gray_old = cv.cvtColor(self.last_saved_slide, cv.COLOR_BGR2GRAY)
+        gray_new = cv.cvtColor(board, cv.COLOR_BGR2GRAY)
+        if gray_old.shape > gray_new.shape:
+            gray_old = cv.resize(gray_old, (gray_new.shape[1],
+                                            gray_new.shape[0]))
+        elif gray_old.shape < gray_new.shape:
+            gray_new = cv.resize(gray_new, (gray_old.shape[1],
+                                            gray_old.shape[0]))
+        frame_delta = cv.absdiff(gray_old, gray_new)
+        thresh = cv.threshold(frame_delta, 25, 255, cv.THRESH_BINARY)[1]
+        inter = cv.dilate(thresh, None, iterations=2)
+        (cnts, _) = cv.findContours(inter,
                                     cv.RETR_TREE,
                                     cv.CHAIN_APPROX_SIMPLE)
         for c in cnts:
-            if cv.contourArea(c) < size:
-                cv.drawContours(inter, [c], 0, 1, -1)
+            if cv.contourArea(c) > size:
+                cv.drawContours(inter, [c], 0, 255, -1)
+            else:
+                cv.drawContours(inter, [c], 0, 0, -1)
         return inter
 
     def split_board(self, board, mask):
@@ -566,7 +581,7 @@ class BoardSearcher:
         """
         height, width = board.shape[:2]
         section_size = (width/self.grid_size[0], height/self.grid_size[1])
-        occlusion_mask = self.__get_occlusion_mask__(mask)
+        occlusion_mask = self.__get_occlusion_mask__(board)
 
         if self.debug:
             debug_image = board.copy()
@@ -578,7 +593,13 @@ class BoardSearcher:
                 cv.rectangle(tmp, (x*section_size[0], y*section_size[1]),
                                   ((x+1)*section_size[0],
                                    (y+1)*section_size[1]),
-                             1, -1)
+                             255, -1)
+                if occlusion_mask.shape > tmp.shape:
+                    occlusion_mask = cv.resize(occlusion_mask,
+                                               (tmp.shape[1], tmp.shape[0]))
+                elif occlusion_mask.shape < tmp.shape:
+                    tmp = cv.resize(tmp, (occlusion_mask.shape[1],
+                                          occlusion_mask.shape[0]))
                 intersection = cv.bitwise_and(occlusion_mask, tmp)
                 count = cv.countNonZero(intersection)
                 if self.stored_section[x][y][0] is None:
@@ -601,10 +622,10 @@ class BoardSearcher:
         if self.debug:
             cv.imshow("board", debug_image)
 
-    def stich_board(self, board):
+    def stitch_board(self, board):
         """
         Function takes sections of a board and based on given thresholding
-        values tries to stich them into one final image. If we seen
+        values tries to stitch them into one final image. If we seen
         section more than given section thresholding value we sow this
         section into final slide. If section is lower than section reject
         threshold we sow last good section into final image. If value is
@@ -617,7 +638,7 @@ class BoardSearcher:
             board(numpy.ndarray): image of a board
 
         Returns:
-            (numpy.ndarray): Final image of a board from stiched sections
+            (numpy.ndarray): Final image of a board from stitched sections
         """
         height, width = board.shape[:2]
         section_size = (width/self.grid_size[0], height/self.grid_size[1])
@@ -656,7 +677,7 @@ class BoardSearcher:
                           (x+1)*section_size[0]] = last_good_section
 
         if self.debug:
-            cv.imshow("stiched image", blank)
+            cv.imshow("stitched image", blank)
         return blank
 
     def get_board(self, image):
