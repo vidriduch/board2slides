@@ -38,16 +38,20 @@ class BoardSearcher:
     grid_size = (8, 8)
     stored_section = None
     last_saved_section = None
-    section_threshold = 4
-    reject_threshold = 2
+    section_threshold = 15
+    reject_threshold = 10
+    section_overlap = 10
+
+    debug_image = None
 
     def __init__(self, n_slides=0,
                  frame_counter=0,
                  save_interval=30,
                  similarity=0.60,
                  compare_function='dhash',
-                 section_thresh=4,
-                 section_rjct=2,
+                 section_thresh=15,
+                 section_rjct=10,
+                 section_overlap=10,
                  grid_size=(8, 8),
                  debug=True):
         self.debug = debug
@@ -67,6 +71,7 @@ class BoardSearcher:
         self.load_config()
         self.section_threshold = section_thresh
         self.reject_threshold = section_rjct
+        self.section_overlap = section_overlap
         self.grid_size = grid_size
         self.stored_section = [[[None for x in range(2)]
                                for x in range(grid_size[0])]
@@ -564,6 +569,35 @@ class BoardSearcher:
                 cv.drawContours(inter, [c], 0, 0, -1)
         return inter
 
+    def __get_section_boundary__(self, x, y, section_size, width, height):
+        """
+        Funcitons returns based on given arguments boundary of individual
+        section.
+
+        Args:
+            x(int): number of section on x axis
+            y(int): number of section on y axis
+            section_size(tuple): width and height of a section
+            width(int): width of table
+            height(int): height of table
+
+        Returns:
+             Coordiantes of cornes of a section
+        """
+        y_first = y*section_size[1]-self.section_overlap
+        y_second = (y+1)*section_size[1]+self.section_overlap
+        x_first = x*section_size[0]-self.section_overlap
+        x_second = (x+1)*section_size[0]+self.section_overlap
+        if y_first < 0:
+            y_first = 0
+        if y_second > height:
+            y_second = height
+        if x_first < 0:
+            x_first = 0
+        if x_second > width:
+            x_second = width
+        return (y_first, y_second, x_first, x_second)
+
     def split_board(self, board, mask):
         """
         Function splits the board into sections that are then
@@ -584,11 +618,13 @@ class BoardSearcher:
         occlusion_mask = self.__get_occlusion_mask__(board)
 
         if self.debug:
-            debug_image = board.copy()
+            self.debug_image = board.copy()
         for x in range(0, self.grid_size[0]):
             for y in range(0, self.grid_size[1]):
-                tmpimg = board[y*section_size[1]:(y+1)*section_size[1],
-                               x*section_size[0]:(x+1)*section_size[0]]
+                boundaries = self.__get_section_boundary__(x, y, section_size,
+                                                           width, height)
+                tmpimg = board[boundaries[0]:boundaries[1],
+                               boundaries[2]:boundaries[3]]
                 tmp = np.zeros(board.shape[:2], dtype="uint8")
                 cv.rectangle(tmp, (x*section_size[0], y*section_size[1]),
                                   ((x+1)*section_size[0],
@@ -605,7 +641,7 @@ class BoardSearcher:
                 if self.stored_section[x][y][0] is None:
                     self.stored_section[x][y][0] = tmpimg
                     self.stored_section[x][y][1] = 0
-                if count <= 100:
+                if count <= 0:
                     self.stored_section[x][y][1] += 1
                     if self.debug:
                         color = (0, 255, 0)
@@ -614,13 +650,11 @@ class BoardSearcher:
                         color = (0, 0, 255)
 
                 if self.debug:
-                    cv.rectangle(debug_image, (x*section_size[0],
-                                               y*section_size[1]),
-                                              ((x+1)*section_size[0],
-                                               (y+1)*section_size[1]),
+                    cv.rectangle(self.debug_image, (x*section_size[0],
+                                                    y*section_size[1]),
+                                                   ((x+1)*section_size[0],
+                                                    (y+1)*section_size[1]),
                                  color, 1)
-        if self.debug:
-            cv.imshow("board", debug_image)
 
     def stitch_board(self, board):
         """
@@ -635,49 +669,66 @@ class BoardSearcher:
         slide
 
         Args:
-            board(numpy.ndarray): image of a board
+            board(numpy.ndarray): Image of a board
 
         Returns:
             (numpy.ndarray): Final image of a board from stitched sections
         """
         height, width = board.shape[:2]
         section_size = (width/self.grid_size[0], height/self.grid_size[1])
-        blank = np.zeros((height, width, 3), dtype="uint8")
+        if self.last_saved_slide is None:
+            blank = np.zeros((height, width, 3), dtype="uint8")
+        else:
+            blank = self.last_saved_slide.copy()
+        if self.debug:
+            font_offset = 35
         for x in range(0, self.grid_size[0]):
             for y in range(0, self.grid_size[1]):
                 seen = self.stored_section[x][y][1]
                 section = self.stored_section[x][y][0]
+                boundaries = self.__get_section_boundary__(x, y, section_size,
+                                                           width, height)
                 if self.last_saved_section[x][y][0] is not None:
                     last_good_section = self.last_saved_section[x][y][0]
                 else:
-                    blank[y*section_size[1]:(y+1)*section_size[1],
-                          x*section_size[0]:(x+1)*section_size[0]] = section
+                    blank[boundaries[0]:boundaries[1],
+                          boundaries[2]:boundaries[3]] = section
                     self.last_saved_section[x][y][0] = section
+                    if self.debug:
+                        cv.putText(self.debug_image, "{}".format(seen),
+                                   (boundaries[2]+font_offset,
+                                    boundaries[0]+font_offset),
+                                   cv.FONT_HERSHEY_COMPLEX, 0.5,
+                                   (255, 0, 0), 1)
+                    continue
+                if blank[boundaries[0]:boundaries[1],
+                         boundaries[2]:boundaries[3]].shape != section.shape:
                     continue
                 if seen >= self.section_threshold:
-                    blank[y*section_size[1]:(y+1)*section_size[1],
-                          x*section_size[0]:(x+1)*section_size[0]] = section
+                    blank[boundaries[0]:boundaries[1],
+                          boundaries[2]:boundaries[3]] = section
+                    if self.debug:
+                        cv.putText(self.debug_image, "{}".format(seen),
+                                   (boundaries[2]+font_offset,
+                                    boundaries[0]+font_offset),
+                                   cv.FONT_HERSHEY_COMPLEX, 0.5,
+                                   (0, 255, 0), 1)
                 elif (seen < self.section_threshold and
                       seen > self.reject_threshold):
                     sim = self.__compare_hashes__(section, last_good_section)
-                    if sim > self.similarity:
-                        blank[y*section_size[1]:
-                              (y+1)*section_size[1],
-                              x*section_size[0]:
-                              (x+1)*section_size[0]] = last_good_section
-                    else:
-                        blank[y*section_size[1]:
-                              (y+1)*section_size[1],
-                              x*section_size[0]:
-                              (x+1)*section_size[0]] = section
-                else:
-                    blank[y*section_size[1]:
-                          (y+1)*section_size[1],
-                          x*section_size[0]:
-                          (x+1)*section_size[0]] = last_good_section
+                    if sim <= self.similarity:
+                        blank[boundaries[0]:boundaries[1],
+                              boundaries[2]:boundaries[3]] = section
+                    if self.debug:
+                        cv.putText(self.debug_image, "{}".format(seen),
+                                   (boundaries[2]+font_offset,
+                                    boundaries[0]+font_offset),
+                                   cv.FONT_HERSHEY_COMPLEX, 0.5,
+                                   (0, 0, 255), 1)
 
         if self.debug:
             cv.imshow("stitched image", blank)
+            cv.imshow("board", self.debug_image)
         return blank
 
     def get_board(self, image):
@@ -772,14 +823,14 @@ video_extension_list = ("mkv", "wmv", "avi", "mp4")
 
 
 def main(input_file, slide_number=0, start_frame=0, check_interval=30,
-         sim=0.60, compare_func='dhash', section_threshold=4,
-         section_reject=2, grid=(16, 16), dbg=True):
+         sim=0.60, compare_func='dhash', section_threshold=15,
+         section_reject=10, overlap=10, grid=(16, 16), dbg=True):
     board = BoardSearcher(n_slides=slide_number, frame_counter=start_frame,
                           save_interval=check_interval, similarity=sim,
                           compare_function=compare_func,
                           section_thresh=section_threshold,
-                          section_rjct=section_reject, grid_size=grid,
-                          debug=dbg)
+                          section_rjct=section_reject, section_overlap=overlap,
+                          grid_size=grid, debug=dbg)
     for file_name in input_file:
         board.start_processing(file_name)
 
@@ -832,20 +883,20 @@ if __name__ == '__main__':
                              (default: dhash)
                              ''')
 
-    parser.add_argument('-t', '--section-threshold', default=8,
+    parser.add_argument('-t', '--section-threshold', default=15,
                         type=float, metavar='T', dest='section_thresh',
                         help='''
                              Threshold value for how many times we have to
                              see individual section of a board to definetely
-                             accept it. (default: 8)
+                             accept it. (default: 15)
                              ''')
 
-    parser.add_argument('-r', '--section-reject', default=4,
+    parser.add_argument('-r', '--section-reject', default=10,
                         type=float, metavar='T', dest='section_reject',
                         help='''
                              Threshold value for how many times we have to
                              see individual section of a board to definetely
-                             reject it. (default: 4)
+                             reject it. (default: 10)
                              ''')
 
     parser.add_argument('--grid-width', default=16,
@@ -853,6 +904,13 @@ if __name__ == '__main__':
                         help='''
                              How many sections we should split image of a board
                              along x axis. (default: 16)
+                             ''')
+
+    parser.add_argument('--section-overlap', default=10,
+                        type=int, metavar='O', dest='sec_over',
+                        help='''
+                             How much such individual section overlap.
+                             (default: 16)
                              ''')
 
     parser.add_argument('--grid-height', default=16,
@@ -872,5 +930,5 @@ if __name__ == '__main__':
          start_frame=args.start_frame, check_interval=args.save_interval,
          sim=args.similarity, compare_func=args.cfunc,
          section_threshold=args.section_thresh,
-         section_reject=args.section_reject,
+         section_reject=args.section_reject, overlap=args.sec_over,
          grid=(args.grid_width, args.grid_height), dbg=args.debug)
