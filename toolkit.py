@@ -120,7 +120,7 @@ class BoardToolkit:
         digest1 = phash.image_digest('toolkit_old.png', 1.0, 1.0, 180)
         digest2 = phash.image_digest('toolkit_new.png', 1.0, 1.0, 180)
         cross_corr = phash.cross_correlation(digest1, digest2)
-        if cross_corr < 0.60:
+        if cross_corr < 0.40:
             cv.imwrite("toolkit_old.png", frame)
             return True
         else:
@@ -148,7 +148,7 @@ class BoardToolkit:
             if not ret:
                 break
             make_slide = False
-            if i % 30 == 0:
+            if i % 120 == 0:
                 if self.check_change(frame):
                     make_slide = True
             (x, y) = self.get_table_metadata(frame)
