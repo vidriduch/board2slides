@@ -8,6 +8,7 @@ import numpy as np
 from random import randint
 import imghdr
 import argparse
+import csv
 
 
 def timeit(func):
@@ -42,7 +43,11 @@ class BoardSearcher:
     reject_threshold = 10
     section_overlap = 10
 
+    board_extraction_tp = []
+    board_extraction_fp = []
+
     debug_image = None
+    eval_file = None
 
     def __init__(self, n_slides=0,
                  frame_counter=0,
@@ -53,6 +58,7 @@ class BoardSearcher:
                  section_rjct=10,
                  section_overlap=10,
                  grid_size=(8, 8),
+                 eval_filename=None,
                  debug=True):
         self.debug = debug
         self.width = None
@@ -73,6 +79,7 @@ class BoardSearcher:
         self.reject_threshold = section_rjct
         self.section_overlap = section_overlap
         self.grid_size = grid_size
+        self.eval_file = eval_filename
         self.stored_section = [[[None for x in range(2)]
                                for x in range(grid_size[0])]
                                for x in range(grid_size[1])]
@@ -112,6 +119,74 @@ class BoardSearcher:
         Stores values of current state of trackbars.
         """
         self.save_config()
+
+    def evaluate_board_extraction(self, image, cnts, eval_file):
+        """
+        Function for evaluating how good we extracted table from video or
+        image. It computes bitwise and between real table and extracted table
+        to get common areas and then computes difference between these
+        tables to get areas that we say are table but are not.
+
+        Args:
+            image(numpy.ndarray): Full image of entire scene
+            cnts(list): Contures of found table
+            eval_file(string): File with boards metadata
+        """
+        with open(eval_file, "r") as meta_file:
+            reader = csv.reader(meta_file)
+            i = 0
+            rect = None
+            for row in reader:
+                if i == self.frame_counter:
+                    rect = row
+                i += 1
+            if rect is None:
+                return
+            orig_board = np.zeros(image.shape[:2], dtype="uint8")
+            cnts_blank = np.zeros(image.shape[:2], dtype="uint8")
+            poly = np.array([[rect[0], rect[2]], [rect[1], rect[2]],
+                             [rect[1], rect[3]], [rect[0], rect[3]]],
+                            np.int32)
+            cv.fillPoly(orig_board, [poly], (255, 255, 255))
+            (board_cnt, _) = cv.findContours(orig_board.copy(), cv.RETR_TREE,
+                                             cv.CHAIN_APPROX_SIMPLE)
+            cv.drawContours(cnts_blank, [cnts], 0, (255, 255, 255), -1)
+            board_area = cv.contourArea(board_cnt[0])
+            eval_board = cv.bitwise_and(orig_board, cnts_blank)
+            (eval_cnt, _) = cv.findContours(eval_board, cv.RETR_TREE,
+                                            cv.CHAIN_APPROX_SIMPLE)
+            diff_board = cv.subtract(cnts_blank, orig_board)
+            (diff_cnt, _) = cv.findContours(diff_board, cv.RETR_TREE,
+                                            cv.CHAIN_APPROX_SIMPLE)
+            diff_area = cv.contourArea(diff_cnt[0])
+            eval_area = cv.contourArea(eval_cnt[0])
+            tp = eval_area/board_area
+            fp = diff_area/board_area
+            self.board_extraction_tp.append(tp)
+            self.board_extraction_fp.append(fp)
+
+    def evaluate_compare_functions(self, eval_file):
+        """
+        Function for evaluating how many slides we made. How good
+        are our compare functions. It checks meta data file if in
+        range of our current frame we should create slide or not.
+
+        Args:
+            eval_file(string): File with media file metadata
+        """
+        with open(eval_file, "r") as meta_file:
+            reader = csv.reader(meta_file)
+            i = 0
+            true_val = False
+            for row in reader:
+                if i >= self.frame_counter-120 and i <= self.frame_counter+120:
+                    if row[4] is True:
+                        true_val = True
+                i += 1
+            if true_val is False:
+                self.slide_creating_fp += 1
+            else:
+                self.slide_creating_tp += 1
 
     def find_board(self, image):
         """
@@ -493,18 +568,20 @@ class BoardSearcher:
 
         if self.saved_cnt is None:
             self.saved_cnt = our_cnt
-
         img = origin.copy()
         cv.drawContours(img, [our_cnt], -1, (0, 0, 255), 3)
         if our_cnt is None:
             return
+        if self.eval_file is not None:
+            self.evaluate_board_extraction(image, our_cnt, self.eval_file)
+
         rect = self.get_sorted_rectangle(our_cnt)
         warp, warp_mask = self.get_cropped_image(rect, img, mask)
         self.split_board(warp, warp_mask)
-        if(self.frame_counter == 0):
+        if(self.frame_counter % self.save_interval == 0):
             self.write_image(our_cnt, warp, warp_mask)
 
-        self.frame_counter = (self.frame_counter + 1) % self.save_interval
+        self.frame_counter += 1
         if self.debug:
             cv.imshow("final image", img)
 
@@ -824,13 +901,14 @@ video_extension_list = ("mkv", "wmv", "avi", "mp4")
 
 def main(input_file, slide_number=0, start_frame=0, check_interval=30,
          sim=0.60, compare_func='dhash', section_threshold=15,
-         section_reject=10, overlap=10, grid=(16, 16), dbg=True):
+         section_reject=10, overlap=10, grid=(16, 16), eval_file=None,
+         dbg=True):
     board = BoardSearcher(n_slides=slide_number, frame_counter=start_frame,
                           save_interval=check_interval, similarity=sim,
                           compare_function=compare_func,
                           section_thresh=section_threshold,
                           section_rjct=section_reject, section_overlap=overlap,
-                          grid_size=grid, debug=dbg)
+                          grid_size=grid, eval_filename=eval_file, debug=dbg)
     for file_name in input_file:
         board.start_processing(file_name)
 
@@ -920,6 +998,13 @@ if __name__ == '__main__':
                              along y axis. (default: 16)
                              ''')
 
+    parser.add_argument('-e', '--eval', type=str, metavar='filename',
+                        dest='eval_file',
+                        help='''
+                             Specify csv file with meta data of given video
+                             or image.
+                             ''')
+
     parser.add_argument('-d', '--debug', action='store_false', dest='debug',
                         help='''
                              Turns off debuging features. (default: turned ON)
@@ -931,4 +1016,5 @@ if __name__ == '__main__':
          sim=args.similarity, compare_func=args.cfunc,
          section_threshold=args.section_thresh,
          section_reject=args.section_reject, overlap=args.sec_over,
-         grid=(args.grid_width, args.grid_height), dbg=args.debug)
+         grid=(args.grid_width, args.grid_height), eval_file=args.eval_file,
+         dbg=args.debug)

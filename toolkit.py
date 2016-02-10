@@ -9,6 +9,8 @@ import time
 import imghdr
 import csv
 import argparse
+import phash
+import os
 
 
 def timeit(func):
@@ -111,6 +113,19 @@ class BoardToolkit:
         name = tail or ntpath.basename(head)
         return name.split('.')[0]
 
+    def check_change(self, frame):
+        if cv.imread("toolkit_old.png", cv.CV_LOAD_IMAGE_COLOR) is None:
+            cv.imwrite("toolkit_old.png", frame)
+        cv.imwrite("toolkit_new.png", frame)
+        digest1 = phash.image_digest('toolkit_old.png', 1.0, 1.0, 180)
+        digest2 = phash.image_digest('toolkit_new.png', 1.0, 1.0, 180)
+        cross_corr = phash.cross_correlation(digest1, digest2)
+        if cross_corr < 0.60:
+            cv.imwrite("toolkit_old.png", frame)
+            return True
+        else:
+            return False
+
     def write_video_metadata(self, video, meta_file):
         """
         Sets up a video capture and loops through all of the
@@ -127,17 +142,26 @@ class BoardToolkit:
             print("Couldn't load video {}".format(video), file=sys.stderr)
             return
         frames = []
+        i = 0
         while(vid.isOpened()):
             ret, frame = vid.read()
             if not ret:
                 break
+            make_slide = False
+            if i % 30 == 0:
+                if self.check_change(frame):
+                    make_slide = True
             (x, y) = self.get_table_metadata(frame)
-            frames.append((x, y))
+            frames.append((x, y, make_slide))
+            i += 1
         with open(meta_file, "wb+") as csvfile:
             csv_writer = csv.writer(csvfile, lineterminator='\n')
             for i, frame in enumerate(frames):
-                csv_writer.writerow([x[0], x[1], y[0], y[1]])
+                x, y, slide = frame
+                csv_writer.writerow([x[0], x[1], y[0], y[1]], slide)
         vid.release()
+        os.remove("toolkit_old.png")
+        os.remove("toolkit_new.png")
 
     def write_image_metadata(self, image, meta_file):
         """
@@ -157,7 +181,6 @@ class BoardToolkit:
             csv_writer = csv.writer(csvfile, lineterminator='\n')
             csv_writer.writerow([x[0], x[1], y[0], y[1]])
 
-    @timeit
     def write_metadata(self, input_file, output_file=None):
         """
         Main function for getting metadata from images or videos.
