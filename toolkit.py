@@ -33,6 +33,9 @@ class BoardToolkit:
 
     video_extension_list = ("mkv", "wmv", "avi", "mp4")
 
+    x_good = (0, 0)
+    y_good = (0, 0)
+
     def __init__(self, lo_thresh=100, hi_thresh=255):
         """
         Args:
@@ -147,18 +150,29 @@ class BoardToolkit:
             ret, frame = vid.read()
             if not ret:
                 break
+            mask = np.zeros(frame.shape[:2], dtype="uint8")
             make_slide = False
             if i % 120 == 0:
                 if self.check_change(frame):
                     make_slide = True
             (x, y) = self.get_table_metadata(frame)
-            frames.append((x, y, make_slide))
+            cv.rectangle(mask, (x[0], y[0]), (x[1], y[1]), (255, 255, 255), -1)
+            (board, _) = cv.findContours(mask, cv.RETR_TREE,
+                                         cv.CHAIN_APPROX_SIMPLE)
+            if len(board) <= 0:
+                continue
+            board_area = cv.contourArea(board[0])
+            height, width = frame.shape[:2]
+            if board_area >= height/2 * width/2:
+                self.x_good = x
+                self.y_good = y
+            frames.append((self.x_good, self.y_good, make_slide))
             i += 1
         with open(meta_file, "wb+") as csvfile:
             csv_writer = csv.writer(csvfile, lineterminator='\n')
             for i, frame in enumerate(frames):
                 x, y, slide = frame
-                csv_writer.writerow([x[0], x[1], y[0], y[1]], slide)
+                csv_writer.writerow([x[0], x[1], y[0], y[1], slide])
         vid.release()
         os.remove("toolkit_old.png")
         os.remove("toolkit_new.png")

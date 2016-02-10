@@ -9,6 +9,7 @@ from random import randint
 import imghdr
 import argparse
 import csv
+import matplotlib.pyplot as plt
 
 
 def timeit(func):
@@ -45,6 +46,8 @@ class BoardSearcher:
 
     board_extraction_tp = []
     board_extraction_fp = []
+    slide_creating_fp = 0
+    slide_creating_tp = 0
 
     debug_image = None
     eval_file = None
@@ -158,6 +161,8 @@ class BoardSearcher:
             diff_board = cv.subtract(cnts_blank, orig_board)
             (diff_cnt, _) = cv.findContours(diff_board, cv.RETR_TREE,
                                             cv.CHAIN_APPROX_SIMPLE)
+            if len(diff_cnt) <= 0 or len(eval_cnt) <= 0:
+                return
             diff_area = cv.contourArea(diff_cnt[0])
             eval_area = cv.contourArea(eval_cnt[0])
             tp = eval_area/board_area
@@ -532,6 +537,8 @@ class BoardSearcher:
             return
         self.stitch_board(board)
         if(self.check_change(board, mask)):
+            if self.eval_file is not None:
+                self.evaluate_compare_functions(self.eval_file)
             cv.imwrite("slide{0}.png".format(self.number_of_slides), board)
             cv.imwrite("mask.png", mask)
             self.last_saved_slide = board
@@ -871,10 +878,15 @@ class BoardSearcher:
             self.create_trackbars()
         while(vid.isOpened()):
             ret, frame = vid.read()
+            if not ret:
+                break
             self.get_board(frame)
             if cv.waitKey(1) & 0xFF == 27:
                 break
         vid.release()
+        plt.plot(self.board_extraction_tp)
+        plt.plot(self.board_extraction_fp)
+        plt.show()
 
     def start_processing(self, input_file):
         """
