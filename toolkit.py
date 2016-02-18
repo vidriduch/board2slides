@@ -70,7 +70,7 @@ class BoardToolkit:
         Args:
             image(numpy.ndarray): Loaded image
 
-        Retunrs:
+        Returns:
             Returns extremes from calculated histogram
         """
         (width, height, _) = image.shape

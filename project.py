@@ -9,7 +9,6 @@ from random import randint
 import imghdr
 import argparse
 import csv
-import matplotlib.pyplot as plt
 
 
 def timeit(func):
@@ -46,11 +45,11 @@ class BoardSearcher:
 
     board_extraction_tp = []
     board_extraction_fp = []
-    slide_creating_fp = 0
-    slide_creating_tp = 0
+    board_extraction_fn = []
 
     debug_image = None
     eval_file = None
+    eval_board_file_data = None
 
     def __init__(self, n_slides=0,
                  frame_counter=0,
@@ -98,6 +97,9 @@ class BoardSearcher:
             'orb': None
         }
         compare_function = switcher.get(keyword, '__compute_dhash__')
+        if compare_function is None:
+            self.hash_function = None
+            return
         self.hash_function = getattr(self, compare_function)
 
     def load_config(self):
@@ -135,63 +137,34 @@ class BoardSearcher:
             cnts(list): Contures of found table
             eval_file(string): File with boards metadata
         """
-        with open(eval_file, "r") as meta_file:
-            reader = csv.reader(meta_file)
-            i = 0
-            rect = None
-            for row in reader:
-                if i == self.frame_counter:
-                    rect = row
-                i += 1
-            if rect is None:
-                return
-            orig_board = np.zeros(image.shape[:2], dtype="uint8")
-            cnts_blank = np.zeros(image.shape[:2], dtype="uint8")
-            poly = np.array([[rect[0], rect[2]], [rect[1], rect[2]],
-                             [rect[1], rect[3]], [rect[0], rect[3]]],
-                            np.int32)
-            cv.fillPoly(orig_board, [poly], (255, 255, 255))
-            (board_cnt, _) = cv.findContours(orig_board.copy(), cv.RETR_TREE,
-                                             cv.CHAIN_APPROX_SIMPLE)
-            cv.drawContours(cnts_blank, [cnts], 0, (255, 255, 255), -1)
-            board_area = cv.contourArea(board_cnt[0])
-            eval_board = cv.bitwise_and(orig_board, cnts_blank)
-            (eval_cnt, _) = cv.findContours(eval_board, cv.RETR_TREE,
-                                            cv.CHAIN_APPROX_SIMPLE)
-            diff_board = cv.subtract(cnts_blank, orig_board)
-            (diff_cnt, _) = cv.findContours(diff_board, cv.RETR_TREE,
-                                            cv.CHAIN_APPROX_SIMPLE)
-            if len(diff_cnt) <= 0 or len(eval_cnt) <= 0:
-                return
-            diff_area = cv.contourArea(diff_cnt[0])
-            eval_area = cv.contourArea(eval_cnt[0])
-            tp = eval_area/board_area
-            fp = diff_area/board_area
-            self.board_extraction_tp.append(tp)
-            self.board_extraction_fp.append(fp)
+        if self.eval_board_file_data is None:
+            self.eval_board_file_data = []
+            with open(eval_file, "r") as meta_file:
+                reader = csv.reader(meta_file)
+                rect = None
+                for row in reader:
+                    self.eval_board_file_data.append(row)
 
-    def evaluate_compare_functions(self, eval_file):
-        """
-        Function for evaluating how many slides we made. How good
-        are our compare functions. It checks meta data file if in
-        range of our current frame we should create slide or not.
+        rect = self.eval_board_file_data[self.frame_counter]
+        orig_board = np.zeros(image.shape[:2], dtype="uint8")
+        cnts_blank = np.zeros(image.shape[:2], dtype="uint8")
+        poly = np.array([[rect[0], rect[2]], [rect[1], rect[2]],
+                         [rect[1], rect[3]], [rect[0], rect[3]]],
+                        np.int32)
+        cv.fillPoly(orig_board, [poly], (255, 255, 255))
+        (board_cnt, _) = cv.findContours(orig_board.copy(), cv.RETR_TREE,
+                                         cv.CHAIN_APPROX_SIMPLE)
+        cv.drawContours(cnts_blank, [cnts], 0, (255, 255, 255), -1)
 
-        Args:
-            eval_file(string): File with media file metadata
-        """
-        with open(eval_file, "r") as meta_file:
-            reader = csv.reader(meta_file)
-            i = 0
-            true_val = False
-            for row in reader:
-                if i >= self.frame_counter-120 and i <= self.frame_counter+120:
-                    if row[4] is True:
-                        true_val = True
-                i += 1
-            if true_val is False:
-                self.slide_creating_fp += 1
-            else:
-                self.slide_creating_tp += 1
+        eval_board = cv.bitwise_and(orig_board, cnts_blank)
+        diff_board = cv.subtract(cnts_blank, orig_board)
+        miss_board = cv.subtract(orig_board, cnts_blank)
+        tp = cv.countNonZero(eval_board)
+        fp = cv.countNonZero(diff_board)
+        fn = cv.countNonZero(miss_board)
+        self.board_extraction_tp.append(tp)
+        self.board_extraction_fp.append(fp)
+        self.board_extraction_fn.append(fn)
 
     def find_board(self, image):
         """
@@ -327,7 +300,7 @@ class BoardSearcher:
             float: Similararity between last saved image and given image
         """
         orb = cv.ORB()
-        kp1, ds1 = orb.detectAndCompute(self.last_image, None)
+        kp1, ds1 = orb.detectAndCompute(last_image, None)
         kp2, ds2 = orb.detectAndCompute(image, None)
         bf = cv.BFMatcher(cv.NORM_HAMMING, crossCheck=True)
         matches = bf.match(ds1, ds2)
@@ -537,8 +510,6 @@ class BoardSearcher:
             return
         self.stitch_board(board)
         if(self.check_change(board, mask)):
-            if self.eval_file is not None:
-                self.evaluate_compare_functions(self.eval_file)
             cv.imwrite("slide{0}.png".format(self.number_of_slides), board)
             cv.imwrite("mask.png", mask)
             self.last_saved_slide = board
@@ -884,9 +855,15 @@ class BoardSearcher:
             if cv.waitKey(1) & 0xFF == 27:
                 break
         vid.release()
-        plt.plot(self.board_extraction_tp)
-        plt.plot(self.board_extraction_fp)
-        plt.show()
+        if self.eval_file is not None:
+            tp_values = sum(self.board_extraction_tp)
+            fp_values = sum(self.board_extraction_fp)
+            fn_values = sum(self.board_extraction_fn)
+            precision = float(tp_values)/(tp_values + fp_values)
+            recall = float(tp_values)/(tp_values + fn_values)
+            print("precision: {}".format(precision))
+            print("recall: {}".format(recall))
+            print("number of slides:{}".format(self.number_of_slides))
 
     def start_processing(self, input_file):
         """
