@@ -50,7 +50,7 @@ class BoardSearcher:
                  similarity=0.60,
                  compare_function='dhash',
                  section_thresh=15,
-                 section_rjct=10,
+                 section_reject_thresh=10,
                  section_overlap=10,
                  grid_size=(8, 8),
                  debug=True):
@@ -70,13 +70,13 @@ class BoardSearcher:
         self.__func_keyword_to_function__(compare_function)
         self.load_config()
         self.section_threshold = section_thresh
-        self.reject_threshold = section_rjct
+        self.reject_threshold = section_reject_thresh
         self.section_overlap = section_overlap
         self.grid_size = grid_size
-        self.stored_section = [[[None for x in range(2)]
+        self.stored_section = [[[None, None]
                                for x in range(grid_size[0])]
                                for x in range(grid_size[1])]
-        self.last_saved_section = [[[None for x in range(2)]
+        self.last_saved_section = [[[None, None]
                                    for x in range(grid_size[0])]
                                    for x in range(grid_size[1])]
 
@@ -456,7 +456,7 @@ class BoardSearcher:
         if cnt is None:
             return
         self.stitch_board(board)
-        if(self.check_change(board, mask)):
+        if (self.check_change(board, mask)):
             cv.imwrite("slide{0}.png".format(self.number_of_slides), board)
             cv.imwrite("mask.png", mask)
             self.last_saved_slide = board
@@ -465,10 +465,9 @@ class BoardSearcher:
             self.last_saved_section = self.stored_section
             self.number_of_slides += 1
 
-        for x in range(0, self.grid_size[0]):
-            for y in range(0, self.grid_size[1]):
-                self.stored_section[x][y][0] = None
-                self.stored_section[x][y][1] = None
+        for x in range(self.grid_size[0]):
+            for y in range(self.grid_size[1]):
+                self.stored_section[x][y] = [None, None]
 
     def find_and_draw_edges(self, image, origin):
         """
@@ -619,8 +618,8 @@ class BoardSearcher:
 
         if self.debug:
             self.debug_image = board.copy()
-        for x in range(0, self.grid_size[0]):
-            for y in range(0, self.grid_size[1]):
+        for x in range(self.grid_size[0]):
+            for y in range(self.grid_size[1]):
                 boundaries = self.__get_section_boundary__(x, y, section_size,
                                                            width, height)
                 tmpimg = board[boundaries[0]:boundaries[1],
@@ -682,8 +681,8 @@ class BoardSearcher:
             blank = self.last_saved_slide.copy()
         if self.debug:
             font_offset = 35
-        for x in range(0, self.grid_size[0]):
-            for y in range(0, self.grid_size[1]):
+        for x in range(self.grid_size[0]):
+            for y in range(self.grid_size[1]):
                 seen = self.stored_section[x][y][1]
                 section = self.stored_section[x][y][0]
                 boundaries = self.__get_section_boundary__(x, y, section_size,
