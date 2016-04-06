@@ -42,31 +42,42 @@ def draw(event, x, y, flags, param):
         color = None
 
 
-def main(image1, image2, thresh=None):
+def main(image1, image2, prep_mask=None, thresh=None):
     im1 = cv.imread(image1, cv.CV_LOAD_IMAGE_COLOR)
     im2 = cv.imread(image2, cv.CV_LOAD_IMAGE_COLOR)
     im11 = cv.cvtColor(im1, cv.COLOR_BGR2GRAY)
     im22 = cv.cvtColor(im2, cv.COLOR_BGR2GRAY)
-    frame_delta = cv.absdiff(im11, im22)
-    frame_delta = cv.threshold(frame_delta, 25, 255, cv.THRESH_BINARY)[1]
-    frame_delta = cv.erode(frame_delta, None, iterations=2)
+    if im11.shape > im22.shape:
+        im2 = cv.resize(im2, (im1.shape[1], im1.shape[0]))
+        im22 = cv.resize(im22, (im11.shape[1], im11.shape[0]))
+    elif im11.shape < im22.shape:
+        im1 = cv.resize(im11, (im2.shape[1], im2.shape[0]))
+        im11 = cv.resize(im11, (im22.shape[1], im22.shape[0]))
+    if prep_mask is None:
+        frame_delta = cv.absdiff(im11, im22)
+        frame_delta = cv.threshold(frame_delta, 25, 255, cv.THRESH_BINARY)[1]
+        frame_delta = cv.erode(frame_delta, None, iterations=2)
 
-    (cnts, _) = cv.findContours(frame_delta, cv.RETR_TREE,
-                                cv.CHAIN_APPROX_SIMPLE)
+        (cnts, _) = cv.findContours(frame_delta, cv.RETR_TREE,
+                                    cv.CHAIN_APPROX_SIMPLE)
 
-    height, width = frame_delta.shape[:2]
-    for c in cnts:
-        blank = np.zeros(frame_delta.shape[:2], dtype='uint8')
-        cv.drawContours(blank, [c], 0, 255, -1)
-        mean1 = map(lambda x: float(x),
-                    cv.mean(im1, mask=blank))
-        mean2 = map(lambda x: float(x),
-                    cv.mean(im2, mask=blank))
-        distance = cv.norm(np.array(mean1), np.array(mean2), cv.NORM_L2)
-        if distance <= thresh:
-            cv.drawContours(frame_delta, [c], 0, 0, -1)
-        else:
-            cv.drawContours(frame_delta, [c], 0, 255, -1)
+        height, width = frame_delta.shape[:2]
+        for c in cnts:
+            blank = np.zeros(frame_delta.shape[:2], dtype='uint8')
+            cv.drawContours(blank, [c], 0, 255, -1)
+            mean1 = map(lambda x: float(x),
+                        cv.mean(im1, mask=blank))
+            mean2 = map(lambda x: float(x),
+                        cv.mean(im2, mask=blank))
+            distance = cv.norm(np.array(mean1), np.array(mean2), cv.NORM_L2)
+            if distance <= thresh:
+                cv.drawContours(frame_delta, [c], 0, 0, -1)
+            else:
+                cv.drawContours(frame_delta, [c], 0, 255, -1)
+    else:
+        frame_delta = cv.imread(prep_mask, cv.CV_LOAD_IMAGE_COLOR)
+        frame_delta = cv.cvtColor(frame_delta, cv.COLOR_BGR2GRAY)
+
     cv.namedWindow('image')
     cv.setMouseCallback('image', draw)
     global img, flood, rec_size
@@ -95,4 +106,7 @@ if __name__ == '__main__':
         thresh = 70
     else:
         thresh = int(sys.argv[3])
-    main(sys.argv[1], sys.argv[2], thresh)
+    if len(sys.argv) == 5:
+        main(sys.argv[1], sys.argv[2], sys.argv[4], thresh)
+    else:
+        main(sys.argv[1], sys.argv[2], thresh=thresh)
