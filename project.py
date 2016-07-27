@@ -1,44 +1,88 @@
 #!/usr/bin/env python
 from __future__ import print_function
-import functools
-import time
-import sys
-import cv2 as cv
-import numpy as np
-from random import randint
-import imghdr
+
 import argparse
+import functools
+import imghdr
+import sys
+import time
+from random import randint
+
+import cv2 as cv
+
+import numpy as np
+
+
+def strtime(millsec, form="%i:%02i:%06.3f"):
+    """
+    Time formating function
+
+    Args:
+        millsec(int): Number of milliseconds to format
+
+    Returns:
+        (string)Formated string
+    """
+    fc = form.count("%")
+    days, milliseconds = divmod(millsec, 86400000)
+    hours, milliseconds = divmod(millsec, 3600000)
+    minutes, milliseconds = divmod(millsec, 60000)
+    seconds = float(milliseconds) / 1000
+    var = {1: (seconds), 2: (minutes, seconds), 3: (hours, minutes, seconds),
+           4: (days, hours, minutes, seconds)}
+    return form % var[fc]
 
 
 def timeit(func):
     """
-    Profiling function to measure time it takes to finish function.
+    Profiling function to measure time it takes to finish function
+
+    Args:
+        func(*function): Function to meassure
+
+    Returns:
+        (*function) New wrapped function with meassurment
     """
     @functools.wraps(func)
     def newfunc(*args, **kwargs):
         start_time = time.time()
         out = func(*args, **kwargs)
         elapsed_time = time.time() - start_time
-        msg = 'function [{}] finished in {} ms'
-        print(msg.format(func.__name__, int(elapsed_time * 1000)))
+        ftime = strtime(elapsed_time * 1000)
+        msg = "function [{}] finished in {}"
+        print(msg.format(func.__name__, ftime))
         return out
     return newfunc
 
 
 class BoardSearcher:
 
+    saved_cnt = None
     last_saved_slide = None
     last_saved_slide_mask = None
     last_saved_hash = None
     last_hash = None
+    similarity = 0.60
     hash_function = None
     debug = True
+    main_col = (110, 255, 110)
+
+    grid_size = (8, 8)
+    stored_section = None
+    last_saved_section = None
+    section_threshold = 15
+    reject_threshold = 10
+    section_overlap = 10
+
+    debug_image = None
 
     def __init__(self, n_slides=0,
                  frame_counter=0,
                  save_interval=30,
                  similarity=0.60,
-                 compare_function='dhash',
+                 compare_function='phash',
+                 section_overlap=10,
+                 grid_size=(8, 8),
                  debug=True):
         self.debug = debug
         self.width = None
@@ -55,6 +99,16 @@ class BoardSearcher:
         self.similarity = similarity
         self.__func_keyword_to_function__(compare_function)
         self.load_config()
+        self.section_threshold = save_interval-1
+        self.reject_threshold = round(0.5*save_interval)
+        self.section_overlap = section_overlap
+        self.grid_size = grid_size
+        self.stored_section = [[[None, None]
+                               for x in range(grid_size[0])]
+                               for x in range(grid_size[1])]
+        self.last_saved_section = [[[None, None]
+                                   for x in range(grid_size[0])]
+                                   for x in range(grid_size[1])]
 
     def __func_keyword_to_function__(self, keyword):
         switcher = {
@@ -103,6 +157,7 @@ class BoardSearcher:
             Found conture in given image
         """
         im = image.copy()
+        im = cv.dilate(im, ((5, 5)), iterations=8)
         (cnts, _) = cv.findContours(im,
                                     cv.RETR_TREE,
                                     cv.CHAIN_APPROX_SIMPLE)
@@ -124,44 +179,34 @@ class BoardSearcher:
 
         return our_cnt
 
-    def seed_sufficient(self, image):
-        """
-        My ghetto green filter that only checks if we really hit the board.
-        So it checks if the green value of seed pixel is the highest
-
-        Args:
-            image(numpy.ndarra): Image from which we get seed values
-
-        Returns:
-            bool: True if found the board. False otherwise
-        """
-        rgb = image[self.seed[1], self.seed[0]]
-        if rgb[1] > rgb[0] and rgb[1] > rgb[2]:
-            return True
-        return False
-
     def get_seed(self, image):
         """
-        Tries to find good seed for flood fill algorithm by randomly picking
-        a point somewhere in the middle of a image and then checking if its
-        value is correct
-
+        Tries to find good seed for flood fill algorithm by thresholding
+        the image with main color. Then randomly picking one image in created
+        blob areas.
         Args:
             image(numpy.ndarray): Image to search in
 
         Returns:
             Coordinates of seed position
         """
-        if self.seed is not None and self.seed_sufficient(image):
+        if self.seed is not None and self.saved_cnt is not None:
             return self.seed
 
-        h, w = image.shape[:2]
-        # three retries to find proper seed
-        for i in xrange(1, 3):
-            self.seed = (randint(w/4, (w/4)*3), randint(h/4, (h/4)*3))
-            if self.seed_sufficient(image):
-                break
-
+        im = image.copy()
+        blobs = cv.inRange(im, (0.5*self.main_col[0],
+                                0.5*self.main_col[1],
+                                0.5*self.main_col[2]),
+                               (self.main_col[0],
+                                self.main_col[1],
+                                self.main_col[2]))
+        (cnts, _) = cv.findContours(blobs, cv.RETR_EXTERNAL,
+                                    cv.CHAIN_APPROX_SIMPLE)
+        cnt = sorted(cnts, key=cv.contourArea, reverse=True)[0]
+        self.seed = tuple(cnt[randint(0, len(cnt)-1)][0])
+        if self.debug is True:
+            cv.circle(im, (self.seed[0], self.seed[1]), 5, (0, 0, 255), -1)
+            cv.imshow("seed", im)
         return self.seed
 
     def get_mask(self, image):
@@ -209,7 +254,7 @@ class BoardSearcher:
             return 0
         return sum(map(lambda x: 0 if x[0] == x[1] else 1, zip(hash1, hash2)))
 
-    def __check_change_orb__(self, image):
+    def __check_change_orb__(self, image, last_image):
         """
         Computes ORB fetures on last saved slide and given image.
         Tries to match features of these images and calculates ratio
@@ -217,12 +262,13 @@ class BoardSearcher:
 
         Args:
             image(numpy.ndarray): Image from which to get features
+            last_image(numpy.ndarray): Image which we want to compare
 
         Returns:
             float: Similararity between last saved image and given image
         """
         orb = cv.ORB()
-        kp1, ds1 = orb.detectAndCompute(self.last_saved_slide, None)
+        kp1, ds1 = orb.detectAndCompute(self.last_image, None)
         kp2, ds2 = orb.detectAndCompute(image, None)
         bf = cv.BFMatcher(cv.NORM_HAMMING, crossCheck=True)
         matches = bf.match(ds1, ds2)
@@ -282,7 +328,7 @@ class BoardSearcher:
         ret = resized[:, 1:] > resized[:, :-1]
         return ret.flatten()
 
-    def __compare_hashes__(self, image):
+    def __compare_hashes__(self, image, compare_image=None):
         """
         Generate hashes of last saved slide and given image and
         computes hamming distance between hashes
@@ -292,14 +338,22 @@ class BoardSearcher:
                                   compare to last saved slide hash
 
         Returns:
-            float: Ratio between hamming distance of hashes and length of
+            float: Ratio between hamming distance of hash and length of
                    the hash
         """
-        if self.last_saved_hash is None:
-            self.last_hash = self.hash_function(self.last_saved_slide)
-        self.last_hash = self.hash_function(image)
-        hamming = self.__hamming_distance__(self.last_hash, self.last_hash)
-        hash_len = len(self.last_hash)
+        if compare_image is None:
+            if self.last_saved_hash is None:
+                tmp_hash = self.hash_function(self.last_saved_slide)
+                self.last_saved_hash = tmp_hash
+            self.last_hash = self.hash_function(image)
+            new_hash = self.last_hash
+            old_hash = self.last_saved_hash
+        else:
+            new_hash = self.hash_function(image)
+            old_hash = self.hash_function(compare_image)
+
+        hamming = self.__hamming_distance__(new_hash, old_hash)
+        hash_len = len(new_hash)
         return float((hash_len - hamming))/hash_len
 
     def check_change(self, image, mask):
@@ -329,19 +383,20 @@ class BoardSearcher:
             return True
 
         if mask.shape != self.last_saved_slide_mask.shape:
-            return False
+            return True
 
         prepared_mask = cv.bitwise_and(self.last_saved_slide_mask, mask)
-        self.last_saved_slide = cv.bitwise_and(self.last_saved_slide,
-                                               self.last_saved_slide,
-                                               mask=prepared_mask)
+        last_saved_masked_slide = cv.bitwise_and(self.last_saved_slide,
+                                                 self.last_saved_slide,
+                                                 mask=prepared_mask)
         check_image = cv.bitwise_and(image, image, mask=prepared_mask)
 
         if self.hash_function is None:
-            val = self.__check_change_orb__(check_image)
+            val = self.__check_change_orb__(check_image,
+                                            last_saved_masked_slide)
         else:
-            val = self.__compare_hashes__(check_image)
-
+            val = self.__compare_hashes__(check_image,
+                                          last_saved_masked_slide)
         if(val > self.similarity):
             return False
 
@@ -407,12 +462,12 @@ class BoardSearcher:
         warp_mask = cv.warpPerspective(mask, warp_mat, (max_width, max_height))
         return (warp, warp_mask)
 
-    def write_image(self, cnt, image, mask):
+    def write_image(self, cnt, board, mask):
         """
-        Handles writing images to the disk. Tries to extract only board
-        from image based on given contures then it performs basic check
-        how much is this image different from previous one. Based on
-        results decides to write or not
+        Handles writing images to the disk. Stitches parts of the board
+        together based on last image and current proccesed one
+        then it performs basic check how much is this image different from
+        previous one. Based on results decides to write or not
 
         Args:
             cnt(numpy.ndarray): Contures of a board
@@ -421,23 +476,33 @@ class BoardSearcher:
         """
         if cnt is None:
             return
-        rect = self.get_sorted_rectangle(cnt)
-        warp, warp_mask = self.get_cropped_image(rect, image, mask)
+        stitch = self.stitch_board(board)
 
-        if(self.check_change(warp, warp_mask)):
-            cv.imwrite("slide{0}.png".format(self.number_of_slides), warp)
-            cv.imwrite("mask.png", warp_mask)
-            self.last_saved_slide = warp
-            self.last_saved_slide_mask = warp_mask
+        if self.debug is False:
+            output = stitch.copy()
+            cv.putText(output,
+                       "Created slides: {}".format(self.number_of_slides),
+                       (output.shape[1] - 200, 50),
+                       cv.FONT_HERSHEY_COMPLEX, 0.5, (255, 255, 255), 1)
+            cv.imshow("output", output)
+
+        if self.check_change(stitch, mask) is True:
+            cv.imwrite("slide{0}.png".format(self.number_of_slides), stitch)
+            cv.imwrite("mask.png", mask)
+            self.last_saved_slide = stitch
+            self.last_saved_slide_mask = mask
             self.last_saved_hash = self.last_hash
+            self.last_saved_section = self.stored_section
             self.number_of_slides += 1
+
+        for x in range(self.grid_size[0]):
+            for y in range(self.grid_size[1]):
+                self.stored_section[x][y] = [None, None]
 
     def find_and_draw_edges(self, image, origin):
         """
-        Transforms color space of original image to HSV.
-        Creates a window with trackbars to adjust hsv values
-        and to show mask image. Thresholds image to get only green
-        parts of original image.
+        Extract mask of the image. Based on this mask calls function
+        to find main area where board is located in the image.
         Calls function find_board which returns conture of a board.
         Draws conture of board
 
@@ -457,9 +522,14 @@ class BoardSearcher:
             self.saved_cnt = our_cnt
 
         img = origin.copy()
-        cv.drawContours(img, [our_cnt], -1, (0, 255, 0), 3)
+        cv.drawContours(img, [our_cnt], -1, (0, 0, 255), 3)
+        if our_cnt is None:
+            return
+        rect = self.get_sorted_rectangle(our_cnt)
+        warp, warp_mask = self.get_cropped_image(rect, img, mask)
+        self.split_board(warp, warp_mask)
         if(self.frame_counter == 0):
-            self.write_image(our_cnt, img, mask)
+            self.write_image(our_cnt, warp, warp_mask)
 
         self.frame_counter = (self.frame_counter + 1) % self.save_interval
         if self.debug:
@@ -468,7 +538,7 @@ class BoardSearcher:
     def preprocesing(self, image):
         """
         Makes a copy of input image then makes a threasholding operation
-        so we can get mask of green areas. Then applies
+        so we can get mask of dominant color areas. Then applies
         that mask to every channel of output image.
 
         Args:
@@ -478,14 +548,207 @@ class BoardSearcher:
             Image with boosted green channel
         """
         im = image.copy()
-        g_boost = cv.inRange(image, (0, 0, 0), (110, 255, 110))
-        im[:, :, 0] = cv.bitwise_and(image[:, :, 0], g_boost)
-        im[:, :, 1] = cv.bitwise_and(image[:, :, 1], g_boost)
-        im[:, :, 2] = cv.bitwise_and(image[:, :, 2], g_boost)
+        self.main_col = cv.mean(im)[:3]
+        c_boost = cv.inRange(image, (0.25*self.main_col[0],
+                                     0.25*self.main_col[1],
+                                     0.25*self.main_col[2]),
+                                    (1.5*self.main_col[0],
+                                     2.5*self.main_col[1],
+                                     1.5*self.main_col[2]))
+        im[:, :, 0] = cv.bitwise_and(image[:, :, 0], c_boost)
+        im[:, :, 1] = cv.bitwise_and(image[:, :, 1], c_boost)
+        im[:, :, 2] = cv.bitwise_and(image[:, :, 2], c_boost)
 
         if self.debug:
             cv.imshow("preprocesing", im)
+            cv.imwrite("preprocesing.png", im)
         return im
+
+    def __get_occlusion_mask__(self, board):
+        """
+        Function tries to extract mask of object in front of the table
+        by diff-ing last saved slide against current image and then thresholds
+        this to get mask of image. After this we dilate image to get rid of
+        small blobs.
+
+        Args:
+            board(numpy.ndarray): Image of the croped board
+
+        Returns:
+           (numpy.ndarray): Mask of objects in foreground
+        """
+        if self.last_saved_slide is None:
+            return np.zeros(board.shape[:2], dtype="uint8")
+
+        height, width = board.shape[:2]
+        size = height/3 * width/3
+        gray_old = cv.cvtColor(self.last_saved_slide, cv.COLOR_BGR2GRAY)
+        gray_new = cv.cvtColor(board, cv.COLOR_BGR2GRAY)
+        if gray_old.shape > gray_new.shape:
+            gray_old = cv.resize(gray_old, (gray_new.shape[1],
+                                            gray_new.shape[0]))
+        elif gray_old.shape < gray_new.shape:
+            gray_new = cv.resize(gray_new, (gray_old.shape[1],
+                                            gray_old.shape[0]))
+        frame_delta = cv.absdiff(gray_new, gray_old)
+        thresh = cv.threshold(frame_delta, 50, 255, cv.THRESH_BINARY)[1]
+        inter = cv.dilate(thresh, None, iterations=2)
+        (cnts, _) = cv.findContours(inter,
+                                    cv.RETR_TREE,
+                                    cv.CHAIN_APPROX_SIMPLE)
+        for c in cnts:
+            if cv.contourArea(c) > size:
+                cv.drawContours(inter, [c], 0, 255, -1)
+            else:
+                cv.drawContours(inter, [c], 0, 0, -1)
+        return inter
+
+    def __get_section_boundary__(self, x, y, section_size, width, height):
+        """
+        Functions returns based on given arguments boundary of individual
+        section.
+
+        Args:
+            x(int): number of section on x axis
+            y(int): number of section on y axis
+            section_size(tuple): width and height of a section
+            width(int): width of table
+            height(int): height of table
+
+        Returns:
+             Coordiantes of cornes of a section
+        """
+        y_first = y*section_size[1]-self.section_overlap
+        y_second = (y+1)*section_size[1]+self.section_overlap
+        x_first = x*section_size[0]-self.section_overlap
+        x_second = (x+1)*section_size[0]+self.section_overlap
+        if y_first < 0:
+            y_first = 0
+        if y_second > height:
+            y_second = height
+        if x_first < 0:
+            x_first = 0
+        if x_second > width:
+            x_second = width
+        return (y_first, y_second, x_first, x_second)
+
+    def split_board(self, board, mask):
+        """
+        Function splits the board into sections that are then
+        individually processed. It runs through every section and
+        checks if it touches any occluding object if it does "seen"
+        counter is not incresed. If it doesn't sections is stored in
+        a list and "seen" counter is incresed
+
+        Args:
+            board(numpy.ndarray): Image of crop and rotated board
+            mask(numpy.ndarray): Mask of crop and rotated board
+
+        Return:
+            (numpy.ndarray): Final image of board without occluding objects
+        """
+        height, width = board.shape[:2]
+        section_size = (width/self.grid_size[0], height/self.grid_size[1])
+        occlusion_mask = self.__get_occlusion_mask__(board)
+
+        if self.debug:
+            self.debug_image = board.copy()
+        for x in range(self.grid_size[0]):
+            for y in range(self.grid_size[1]):
+                boundaries = self.__get_section_boundary__(x, y, section_size,
+                                                           width, height)
+                tmpimg = board[boundaries[0]:boundaries[1],
+                               boundaries[2]:boundaries[3]]
+                intersection = occlusion_mask[boundaries[0]:boundaries[1],
+                                              boundaries[2]:boundaries[3]]
+                count = cv.countNonZero(intersection)
+                if self.stored_section[x][y][0] is None:
+                    self.stored_section[x][y][0] = tmpimg
+                    self.stored_section[x][y][1] = 0
+                if count <= 0:
+                    self.stored_section[x][y][1] += 1
+                else:
+                    if self.debug:
+                        cv.rectangle(self.debug_image, (x*section_size[0],
+                                                        y*section_size[1]),
+                                                       ((x+1)*section_size[0],
+                                                        (y+1)*section_size[1]),
+                                     (0, 0, 255), 1)
+
+    def stitch_board(self, board):
+        """
+        Function takes sections of a board and based on given thresholding
+        values tries to stitch them into one final image. If we seen
+        section more than given section thresholding value we sow this
+        section into final slide. If section is lower than section reject
+        threshold we sow last good section into final image. If value is
+        between these two thresholds we check how similar is this section
+        to last good save one if they are similar last good one is sow if they
+        are not we got some new information and new section is put into final
+        slide
+
+        Args:
+            board(numpy.ndarray): Image of a board
+
+        Returns:
+            (numpy.ndarray): Final image of a board from stitched sections
+        """
+        height, width = board.shape[:2]
+        section_size = (width/self.grid_size[0], height/self.grid_size[1])
+        if self.last_saved_slide is None:
+            blank = np.zeros((height, width, 3), dtype="uint8")
+        else:
+            blank = self.last_saved_slide.copy()
+        if self.debug:
+            font_offset = 35
+        for x in range(self.grid_size[0]):
+            for y in range(self.grid_size[1]):
+                seen = self.stored_section[x][y][1]
+                section = self.stored_section[x][y][0]
+                boundaries = self.__get_section_boundary__(x, y, section_size,
+                                                           width, height)
+                if self.last_saved_section[x][y][0] is not None:
+                    last_good_section = self.last_saved_section[x][y][0]
+                else:
+                    blank[boundaries[0]:boundaries[1],
+                          boundaries[2]:boundaries[3]] = section
+                    self.last_saved_section[x][y][0] = section
+                    if self.debug:
+                        cv.putText(self.debug_image, "{}".format(seen),
+                                   (boundaries[2]+font_offset,
+                                    boundaries[0]+font_offset),
+                                   cv.FONT_HERSHEY_COMPLEX, 0.5,
+                                   (255, 0, 0), 1)
+                    continue
+                if blank[boundaries[0]:boundaries[1],
+                         boundaries[2]:boundaries[3]].shape != section.shape:
+                    continue
+                if seen >= self.section_threshold:
+                    blank[boundaries[0]:boundaries[1],
+                          boundaries[2]:boundaries[3]] = section
+                    if self.debug:
+                        cv.putText(self.debug_image, "{}".format(seen),
+                                   (boundaries[2]+font_offset,
+                                    boundaries[0]+font_offset),
+                                   cv.FONT_HERSHEY_COMPLEX, 0.5,
+                                   (0, 255, 0), 1)
+                elif (seen < self.section_threshold and
+                      seen > self.reject_threshold):
+                    sim = self.__compare_hashes__(section, last_good_section)
+                    if sim <= self.similarity:
+                        blank[boundaries[0]:boundaries[1],
+                              boundaries[2]:boundaries[3]] = section
+                    if self.debug:
+                        cv.putText(self.debug_image, "{}".format(seen),
+                                   (boundaries[2]+font_offset,
+                                    boundaries[0]+font_offset),
+                                   cv.FONT_HERSHEY_COMPLEX, 0.5,
+                                   (0, 0, 255), 1)
+
+        if self.debug:
+            cv.imshow("stitched image", blank)
+            cv.imshow("board", self.debug_image)
+        return blank
 
     def get_board(self, image):
         """
@@ -520,7 +783,7 @@ class BoardSearcher:
         mask = self.get_mask(hsv_image)
         return self.find_board(mask)
 
-    def image_search(self, image):
+    def process_image(self, image):
         """
         Main image search function
 
@@ -538,22 +801,58 @@ class BoardSearcher:
             if cv.waitKey(1) & 0xFF == 27:
                 break
 
-    def video_search(self, video):
+    @timeit
+    def process_video(self, video):
         """
         Main video search function
 
         Args:
             video(string): Path to video file to process
         """
+        if self.debug is False:
+            # avgpf - average time it took to process frames in one second
+            frame_counter, fps, old_frames, timer, avgpf = 0, 0, 0, 0, 0
+            print("Press ESC to exit")
         vid = cv.VideoCapture(video)
+        all_frames = int(vid.get(cv.cv.CV_CAP_PROP_FRAME_COUNT))
         if self.debug is True:
             self.create_trackbars()
         while(vid.isOpened()):
             ret, frame = vid.read()
-            self.get_board(frame)
+            if ret is False:
+                break
+            if self.debug is False:
+                start_time = time.time()
+                self.get_board(frame)
+                elapsed_time = time.time() - start_time
+                timer += elapsed_time
+                if timer > 1:
+                    fps = frame_counter - old_frames
+                    avgpf = timer / fps
+                    timer %= 1
+                    old_frames = frame_counter
+            else:
+                self.get_board(frame)
             if cv.waitKey(1) & 0xFF == 27:
                 break
+            if self.debug is False:
+                curr_pos = int(vid.get(cv.cv.CV_CAP_PROP_POS_MSEC))
+                frame_counter += 1
+                message = ("\rprocessing frame #: {0}/{1} | "
+                           "current position: {2} | "
+                           "processed fps: {3}  | "
+                           "avg proccess frame time: {4:.02f} ms"
+                           ).format(frame_counter, all_frames,
+                                    strtime(curr_pos, "%i:%02i:%02i"), fps,
+                                    avgpf * 1000)
+                if self.saved_cnt is None:
+                    im = np.ones((1, 1))
+                    cv.imshow("output", im)
+                print(message, end="")
         vid.release()
+        if self.debug is False:
+            print("\nNumber of created slides: {}"
+                  .format(self.number_of_slides))
 
     def start_processing(self, input_file):
         """
@@ -565,9 +864,9 @@ class BoardSearcher:
         """
         try:
             if (input_file.endswith(video_extension_list)):
-                self.video_search(input_file)
+                self.process_video(input_file)
             elif (imghdr.what is not None):
-                self.image_search(input_file)
+                self.process_image(input_file)
             else:
                 print("Unrecognized file format", file=sys.stderr)
             cv.destroyAllWindows()
@@ -579,10 +878,11 @@ video_extension_list = ("mkv", "wmv", "avi", "mp4")
 
 
 def main(input_file, slide_number=0, start_frame=0, check_interval=30,
-         sim=0.60, compare_func='dhash', dbg=True):
+         sim=0.60, compare_func='dhash', overlap=10, grid=(16, 16), dbg=True):
     board = BoardSearcher(n_slides=slide_number, frame_counter=start_frame,
                           save_interval=check_interval, similarity=sim,
-                          compare_function=compare_func, debug=dbg)
+                          compare_function=compare_func,
+                          section_overlap=overlap, grid_size=grid, debug=dbg)
     for file_name in input_file:
         board.start_processing(file_name)
 
@@ -625,22 +925,44 @@ if __name__ == '__main__':
                              (default: 0)
                              ''')
 
-    parser.add_argument('-c', '--compare-function', default='dhash',
+    parser.add_argument('-c', '--compare-function', default='phash',
                         dest='cfunc',
                         choices=['dhash', 'phash', 'ahash', 'orb'],
                         help='''
                              Specify a compare function which is going to
                              be used to perform similarity chceck between
                              last saved slide and currently proccesed one.
-                             (default: dhash)
+                             (default: phash)
                              ''')
 
-    parser.add_argument('-d', '--debug', action='store_false', dest='debug',
+    parser.add_argument('--grid-width', default=16,
+                        type=float, metavar='T', dest='grid_width',
                         help='''
-                             Turns off debuging features. (default: turned ON)
+                             How many sections we should split image of a board
+                             along x axis. (default: 16)
+                             ''')
+
+    parser.add_argument('--section-overlap', default=10,
+                        type=int, metavar='O', dest='sec_over',
+                        help='''
+                             How much such individual section overlap.
+                             (default: 10)
+                             ''')
+
+    parser.add_argument('--grid-height', default=16,
+                        type=float, metavar='T', dest='grid_height',
+                        help='''
+                             How many sections we should split image of a board
+                             along y axis. (default: 16)
+                             ''')
+
+    parser.add_argument('-d', '--debug', action='store_true', dest='debug',
+                        help='''
+                             Turns off debuging features. (default: turned OFF)
                              ''')
 
     args = parser.parse_args()
     main(args.filename, slide_number=args.slide_number,
          start_frame=args.start_frame, check_interval=args.save_interval,
-         sim=args.similarity, compare_func=args.cfunc, dbg=args.debug)
+         sim=args.similarity, compare_func=args.cfunc, overlap=args.sec_over,
+         grid=(args.grid_width, args.grid_height), dbg=args.debug)
